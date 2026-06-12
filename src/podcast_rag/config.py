@@ -16,6 +16,14 @@ class Settings:
     def raw_dir(self) -> Path:
         return self.data_dir / "raw"
 
+    @property
+    def media_dir(self) -> Path:
+        return self.data_dir / "media"
+
+    @property
+    def transcript_dir(self) -> Path:
+        return self.data_dir / "transcripts"
+
 
 def build_settings(data_dir: Path | None = None) -> Settings:
     return Settings(data_dir=data_dir or Path("data"))

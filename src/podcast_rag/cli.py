@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -8,8 +9,11 @@ from rich.table import Table
 
 from podcast_rag.config import build_settings
 from podcast_rag.db import add_episode, init_db
+from podcast_rag.discovery import PlaylistMode, PlaylistOrder, discover_sources
+from podcast_rag.ingest import ingest_url
 from podcast_rag.search import get_episode_segments, list_episodes, list_topics, search_chunks
 from podcast_rag.timecode import format_timestamp
+from podcast_rag.transcription import transcribe_audio
 from podcast_rag.transcripts import parse_transcript_file
 
 app = typer.Typer(no_args_is_help=True)
@@ -51,6 +55,129 @@ def ingest_transcript_command(
         language=language,
     )
     console.print(f"Imported episode [bold]{episode_id}[/bold] with {len(segments)} transcript segments.")
+
+
+@app.command("ingest-url")
+def ingest_url_command(
+    url: str = typer.Argument(..., help="Media URL, YouTube video, playlist, or page containing media links."),
+    playlist_mode: PlaylistMode = typer.Option(
+        PlaylistMode.single,
+        "--playlist-mode",
+        help="Use 'single' for one item or 'all' to expand playlists/pages.",
+    ),
+    playlist_order: PlaylistOrder = typer.Option(
+        PlaylistOrder.source,
+        "--playlist-order",
+        help="For expanded playlists, keep source order or prefer newest metadata.",
+    ),
+    max_items: int | None = typer.Option(
+        None,
+        "--max-items",
+        min=1,
+        help="Maximum playlist/page items to ingest. Source ordering is preserved.",
+    ),
+    whisper_model: str = typer.Option("small", "--whisper-model", help="faster-whisper model size."),
+    device: str = typer.Option("auto", "--device", help="Whisper device: auto, cpu, cuda, or mps."),
+    compute_type: str = typer.Option("auto", "--compute-type", help="Whisper compute type."),
+    language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    no_skip_existing: bool = typer.Option(False, "--no-skip-existing", help="Reprocess URLs already in the DB."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Download URL audio, transcribe it locally, and import the transcript."""
+    settings = build_settings(data_dir)
+    results = ingest_url(
+        url=url,
+        settings=settings,
+        playlist_mode=playlist_mode,
+        playlist_order=playlist_order,
+        max_items=max_items,
+        whisper_model=whisper_model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        skip_existing=not no_skip_existing,
+    )
+    table = Table("Status", "Episode", "Title", "Source", "Message")
+    for result in results:
+        table.add_row(
+            result.status,
+            str(result.episode_id or ""),
+            str(result.title or ""),
+            result.source_url,
+            str(result.message or ""),
+        )
+    console.print(table)
+
+
+@app.command("discover-url")
+def discover_url_command(
+    url: str = typer.Argument(..., help="Media URL, playlist, or page containing media links."),
+    playlist_mode: PlaylistMode = typer.Option(PlaylistMode.all, "--playlist-mode"),
+    playlist_order: PlaylistOrder = typer.Option(PlaylistOrder.source, "--playlist-order"),
+    max_items: int | None = typer.Option(None, "--max-items", min=1),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Preview media sources found in a URL without downloading them."""
+    sources = discover_sources(
+        url,
+        playlist_mode=playlist_mode,
+        playlist_order=playlist_order,
+        max_items=max_items,
+    )
+    if as_json:
+        console.print_json(
+            json.dumps(
+                [
+                    {
+                        "url": source.url,
+                        "title": source.title,
+                        "webpage_url": source.webpage_url,
+                        "source_type": source.source_type,
+                    }
+                    for source in sources
+                ],
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    table = Table("No.", "Type", "Title", "URL")
+    for index, source in enumerate(sources, start=1):
+        table.add_row(str(index), source.source_type, str(source.title or ""), source.webpage_url or source.url)
+    console.print(table)
+
+
+@app.command("transcribe-audio")
+def transcribe_audio_command(
+    audio_path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
+    title: str = typer.Option(..., "--title", "-t", help="Episode title."),
+    source_url: str | None = typer.Option(None, "--source-url", help="Original media URL."),
+    author: str | None = typer.Option(None, "--author", help="Podcast author or channel."),
+    whisper_model: str = typer.Option("small", "--whisper-model", help="faster-whisper model size."),
+    device: str = typer.Option("auto", "--device", help="Whisper device: auto, cpu, cuda, or mps."),
+    compute_type: str = typer.Option("auto", "--compute-type", help="Whisper compute type."),
+    language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Transcribe a local audio file with faster-whisper and import it."""
+    settings = build_settings(data_dir)
+    segments, detected_language = transcribe_audio(
+        audio_path,
+        model_size=whisper_model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        transcript_dir=settings.transcript_dir,
+    )
+    episode_id = add_episode(
+        settings.db_path,
+        title=title,
+        segments=segments,
+        source_url=source_url,
+        author=author,
+        language=language or detected_language,
+    )
+    console.print(f"Transcribed and imported episode [bold]{episode_id}[/bold] with {len(segments)} segments.")
 
 
 @app.command("episodes")

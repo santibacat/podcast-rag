@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_source_url
+ON episodes(source_url)
+WHERE source_url IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS transcript_segments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
@@ -78,6 +82,14 @@ def add_episode(
 ) -> int:
     init_db(db_path)
     with connect(db_path) as connection:
+        if source_url:
+            existing = connection.execute(
+                "SELECT id FROM episodes WHERE source_url = ?",
+                (source_url,),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["id"])
+
         cursor = connection.execute(
             "INSERT INTO episodes (title, source_url, author, language) VALUES (?, ?, ?, ?)",
             (title, source_url, author, language),
@@ -133,6 +145,16 @@ def add_episode(
                 )
 
     return episode_id
+
+
+def episode_exists(db_path: Path, source_url: str) -> bool:
+    init_db(db_path)
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT 1 FROM episodes WHERE source_url = ? LIMIT 1",
+            (source_url,),
+        ).fetchone()
+    return row is not None
 
 
 def upsert_entity(connection: sqlite3.Connection, name: str) -> int:

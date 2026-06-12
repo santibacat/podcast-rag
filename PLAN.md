@@ -66,6 +66,8 @@ Commands:
 
 ```bash
 uv run podcast-rag ingest-url "https://youtube.com/..."
+uv run podcast-rag discover-url "https://example.com/podcast-page"
+uv run podcast-rag ingest-url "https://youtube.com/playlist?list=..." --playlist-mode all --max-items 5
 ```
 
 Features:
@@ -74,6 +76,10 @@ Features:
 - Use `ffmpeg` to normalize audio.
 - Store media assets under `data/media`.
 - Avoid re-downloading sources already ingested.
+- Expand playlists and web pages that contain multiple media links.
+- Allow ingesting one item, all items, or a limited number of items.
+
+Status: implemented for `yt-dlp`-supported media, YouTube playlists, direct media links found in web pages, and embedded YouTube links found in web pages.
 
 ### Milestone 3: Local Transcription
 
@@ -88,6 +94,8 @@ Features:
   - `small`
   - `medium`
   - `large-v3`
+
+Status: implemented through `ingest-url` and `transcribe-audio`.
 
 ### Milestone 4: Semantic Search
 

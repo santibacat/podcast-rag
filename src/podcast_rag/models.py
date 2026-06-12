@@ -17,3 +17,20 @@ class TranscriptChunk:
     end_seconds: float | None
     segment_start: int
     segment_end: int
+
+
+@dataclass(frozen=True)
+class MediaSource:
+    url: str
+    title: str | None = None
+    webpage_url: str | None = None
+    source_type: str = "media"
+
+
+@dataclass(frozen=True)
+class DownloadedMedia:
+    source_url: str
+    title: str
+    author: str | None
+    audio_path: str
+    webpage_url: str | None = None
