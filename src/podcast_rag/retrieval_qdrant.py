@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from podcast_rag.db import connect, init_db
+from podcast_rag.search import get_chunk_context
 
 DEFAULT_QDRANT_COLLECTION = "podcast_chunks"
 DEFAULT_QDRANT_DENSE_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -16,13 +17,25 @@ class QdrantIndexConfig:
     collection_name: str = DEFAULT_QDRANT_COLLECTION
     dense_model: str = DEFAULT_QDRANT_DENSE_MODEL
     sparse_model: str = DEFAULT_QDRANT_SPARSE_MODEL
+    url: str | None = None
 
 
 def build_qdrant_client(qdrant_dir: Path, config: QdrantIndexConfig):
     from qdrant_client import QdrantClient
 
-    qdrant_dir.mkdir(parents=True, exist_ok=True)
-    client = QdrantClient(path=str(qdrant_dir))
+    if config.url:
+        client = QdrantClient(url=config.url)
+    else:
+        qdrant_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            client = QdrantClient(path=str(qdrant_dir))
+        except RuntimeError as exc:
+            if "already accessed by another instance" in str(exc):
+                raise RuntimeError(
+                    "Local Qdrant storage is already in use. Run Qdrant-backed commands sequentially, "
+                    "set QDRANT_URL, or pass --qdrant-url to use a Qdrant server for concurrent access."
+                ) from exc
+            raise
     client.set_model(config.dense_model)
     client.set_sparse_model(config.sparse_model)
     return client
@@ -86,6 +99,8 @@ def qdrant_hybrid_search(
     config: QdrantIndexConfig = QdrantIndexConfig(),
     limit: int = 10,
     prefetch_limit: int = 40,
+    episode_id: int | None = None,
+    topic: str | None = None,
 ) -> list[dict[str, Any]]:
     from qdrant_client import models
 
@@ -111,12 +126,49 @@ def qdrant_hybrid_search(
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
+        query_filter=build_qdrant_filter(episode_id=episode_id, topic=topic),
         limit=limit,
         with_payload=True,
     )
     results = [scored_point_to_result(point) for point in response.points]
     client.close()
     return results
+
+
+def retrieve_evidence(
+    query: str,
+    db_path: Path,
+    qdrant_dir: Path,
+    config: QdrantIndexConfig = QdrantIndexConfig(),
+    limit: int = 5,
+    prefetch_limit: int = 40,
+    before_segments: int = 2,
+    after_segments: int = 2,
+    episode_id: int | None = None,
+    topic: str | None = None,
+) -> list[dict[str, Any]]:
+    results = qdrant_hybrid_search(
+        query=query,
+        qdrant_dir=qdrant_dir,
+        config=config,
+        limit=limit,
+        prefetch_limit=prefetch_limit,
+        episode_id=episode_id,
+        topic=topic,
+    )
+    evidence: list[dict[str, Any]] = []
+    for result in results:
+        context = get_chunk_context(
+            db_path,
+            int(result["chunk_id"]),
+            before_segments=before_segments,
+            after_segments=after_segments,
+        )
+        enriched = dict(result)
+        enriched["context_text"] = context["context_text"]
+        enriched["context_segments"] = context["segments"]
+        evidence.append(enriched)
+    return evidence
 
 
 def list_transcript_chunks(db_path: Path) -> list[dict[str, Any]]:
@@ -133,13 +185,18 @@ def list_transcript_chunks(db_path: Path) -> list[dict[str, Any]]:
                 episodes.language,
                 transcript_chunks.start_seconds,
                 transcript_chunks.end_seconds,
-                transcript_chunks.text
+                transcript_chunks.text,
+                GROUP_CONCAT(DISTINCT entities.name) AS entities,
+                GROUP_CONCAT(DISTINCT entities.entity_type) AS entity_types
             FROM transcript_chunks
             JOIN episodes ON episodes.id = transcript_chunks.episode_id
+            LEFT JOIN entity_mentions ON entity_mentions.chunk_id = transcript_chunks.id
+            LEFT JOIN entities ON entities.id = entity_mentions.entity_id
+            GROUP BY transcript_chunks.id
             ORDER BY transcript_chunks.id
             """
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [_normalize_chunk_row(dict(row)) for row in rows]
 
 
 def build_qdrant_vectors(
@@ -168,7 +225,23 @@ def build_qdrant_payload(row: dict[str, Any]) -> dict[str, Any]:
         "start_seconds": row["start_seconds"],
         "end_seconds": row["end_seconds"],
         "text": row["text"],
+        "entities": row.get("entities", []),
+        "entity_types": row.get("entity_types", []),
     }
+
+
+def build_qdrant_filter(episode_id: int | None = None, topic: str | None = None) -> Any | None:
+    if episode_id is None and topic is None:
+        return None
+
+    from qdrant_client import models
+
+    must: list[Any] = []
+    if episode_id is not None:
+        must.append(models.FieldCondition(key="episode_id", match=models.MatchValue(value=episode_id)))
+    if topic:
+        must.append(models.FieldCondition(key="entities", match=models.MatchValue(value=topic)))
+    return models.Filter(must=must)
 
 
 def scored_point_to_result(point: Any) -> dict[str, Any]:
@@ -176,6 +249,20 @@ def scored_point_to_result(point: Any) -> dict[str, Any]:
     payload["score"] = float(point.score)
     payload["point_id"] = point.id
     return payload
+
+
+def _normalize_chunk_row(row: dict[str, Any]) -> dict[str, Any]:
+    entities = row.get("entities")
+    if isinstance(entities, str) and entities:
+        row["entities"] = sorted(item for item in entities.split(",") if item)
+    else:
+        row["entities"] = []
+    entity_types = row.get("entity_types")
+    if isinstance(entity_types, str) and entity_types:
+        row["entity_types"] = sorted(item for item in entity_types.split(",") if item)
+    else:
+        row["entity_types"] = []
+    return row
 
 
 def batched(rows: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]:

@@ -46,7 +46,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS transcript_chunks_fts USING fts5(text, title)
 
 CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE
+    name TEXT NOT NULL UNIQUE,
+    entity_type TEXT NOT NULL DEFAULT 'UNKNOWN',
+    confidence REAL NOT NULL DEFAULT 0.0,
+    evidence TEXT
 );
 
 CREATE TABLE IF NOT EXISTS entity_mentions (
@@ -65,6 +68,18 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (chunk_id, model_name)
 );
+
+CREATE TABLE IF NOT EXISTS entity_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    target_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL DEFAULT 'CO_OCCURS',
+    weight REAL NOT NULL DEFAULT 1.0,
+    shared_chunks INTEGER NOT NULL DEFAULT 0,
+    shared_episodes INTEGER NOT NULL DEFAULT 0,
+    evidence TEXT,
+    UNIQUE(source_entity_id, target_entity_id, relation_type)
+);
 """
 
 
@@ -79,6 +94,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def init_db(db_path: Path) -> None:
     with connect(db_path) as connection:
         connection.executescript(SCHEMA)
+        migrate_schema(connection)
 
 
 def add_episode(
@@ -143,15 +159,22 @@ def add_episode(
             )
 
         for chunk_id, text in chunk_rows:
-            for name, count in extract_candidate_entities(text):
-                entity_id = upsert_entity(connection, name)
+            for candidate in extract_candidate_entities(text):
+                entity_id = upsert_entity(
+                    connection,
+                    candidate.name,
+                    entity_type=candidate.entity_type,
+                    confidence=candidate.confidence,
+                    evidence=candidate.evidence,
+                )
                 connection.execute(
                     """
                     INSERT INTO entity_mentions (entity_id, episode_id, chunk_id, count)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (entity_id, episode_id, chunk_id, count),
+                    (entity_id, episode_id, chunk_id, candidate.count),
                 )
+        rebuild_entity_relations_for_episode(connection, episode_id)
 
     return episode_id
 
@@ -166,9 +189,88 @@ def episode_exists(db_path: Path, source_url: str) -> bool:
     return row is not None
 
 
-def upsert_entity(connection: sqlite3.Connection, name: str) -> int:
-    cursor = connection.execute("INSERT OR IGNORE INTO entities (name) VALUES (?)", (name,))
-    if cursor.lastrowid:
-        return int(cursor.lastrowid)
+def migrate_schema(connection: sqlite3.Connection) -> None:
+    entity_columns = {row["name"] for row in connection.execute("PRAGMA table_info(entities)").fetchall()}
+    if "entity_type" not in entity_columns:
+        connection.execute("ALTER TABLE entities ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'UNKNOWN'")
+    if "confidence" not in entity_columns:
+        connection.execute("ALTER TABLE entities ADD COLUMN confidence REAL NOT NULL DEFAULT 0.0")
+    if "evidence" not in entity_columns:
+        connection.execute("ALTER TABLE entities ADD COLUMN evidence TEXT")
+
+
+def upsert_entity(
+    connection: sqlite3.Connection,
+    name: str,
+    entity_type: str = "UNKNOWN",
+    confidence: float = 0.0,
+    evidence: str | None = None,
+) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO entities (name, entity_type, confidence, evidence)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            entity_type = CASE
+                WHEN excluded.confidence >= entities.confidence THEN excluded.entity_type
+                ELSE entities.entity_type
+            END,
+            confidence = MAX(entities.confidence, excluded.confidence),
+            evidence = COALESCE(entities.evidence, excluded.evidence)
+        """,
+        (name, entity_type, confidence, evidence),
+    )
     row = connection.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchone()
     return int(row["id"])
+
+
+def rebuild_entity_relations_for_episode(connection: sqlite3.Connection, episode_id: int) -> None:
+    connection.execute(
+        """
+        DELETE FROM entity_relations
+        WHERE source_entity_id IN (
+            SELECT DISTINCT entity_id FROM entity_mentions WHERE episode_id = ?
+        )
+        OR target_entity_id IN (
+            SELECT DISTINCT entity_id FROM entity_mentions WHERE episode_id = ?
+        )
+        """,
+        (episode_id, episode_id),
+    )
+    rows = connection.execute(
+        """
+        SELECT
+            MIN(left_mentions.entity_id, right_mentions.entity_id) AS source_entity_id,
+            MAX(left_mentions.entity_id, right_mentions.entity_id) AS target_entity_id,
+            COUNT(DISTINCT left_mentions.chunk_id) AS shared_chunks,
+            COUNT(DISTINCT left_mentions.episode_id) AS shared_episodes,
+            MIN(transcript_chunks.text) AS evidence
+        FROM entity_mentions AS left_mentions
+        JOIN entity_mentions AS right_mentions
+            ON right_mentions.chunk_id = left_mentions.chunk_id
+           AND right_mentions.entity_id != left_mentions.entity_id
+        JOIN transcript_chunks ON transcript_chunks.id = left_mentions.chunk_id
+        WHERE left_mentions.episode_id = ?
+        GROUP BY source_entity_id, target_entity_id
+        """,
+        (episode_id,),
+    ).fetchall()
+    for row in rows:
+        shared_chunks = int(row["shared_chunks"])
+        shared_episodes = int(row["shared_episodes"])
+        weight = shared_chunks + shared_episodes * 0.25
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO entity_relations
+            (source_entity_id, target_entity_id, relation_type, weight, shared_chunks, shared_episodes, evidence)
+            VALUES (?, ?, 'CO_OCCURS', ?, ?, ?, ?)
+            """,
+            (
+                int(row["source_entity_id"]),
+                int(row["target_entity_id"]),
+                weight,
+                shared_chunks,
+                shared_episodes,
+                row["evidence"],
+            ),
+        )

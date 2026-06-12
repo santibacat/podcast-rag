@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = Path("data")
+    qdrant_url: str | None = None
 
     @property
     def db_path(self) -> Path:
@@ -29,5 +31,5 @@ class Settings:
         return self.data_dir / "qdrant"
 
 
-def build_settings(data_dir: Path | None = None) -> Settings:
-    return Settings(data_dir=data_dir or Path("data"))
+def build_settings(data_dir: Path | None = None, qdrant_url: str | None = None) -> Settings:
+    return Settings(data_dir=data_dir or Path("data"), qdrant_url=qdrant_url or os.getenv("QDRANT_URL"))

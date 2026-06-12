@@ -19,8 +19,17 @@ from podcast_rag.retrieval_qdrant import (
     QdrantIndexConfig,
     index_qdrant_chunks,
     qdrant_hybrid_search,
+    retrieve_evidence,
 )
-from podcast_rag.search import get_episode_segments, list_episodes, list_topics, related_topics, search_chunks
+from podcast_rag.search import (
+    entity_connections,
+    get_chunk_context,
+    get_episode_segments,
+    list_episodes,
+    list_topics,
+    related_topics,
+    search_chunks,
+)
 from podcast_rag.timecode import format_timestamp
 from podcast_rag.transcription import transcribe_audio
 from podcast_rag.transcripts import parse_transcript_file
@@ -273,13 +282,19 @@ def index_retrieval_command(
     collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
     dense_model: str = typer.Option(DEFAULT_QDRANT_DENSE_MODEL, "--dense-model", help="FastEmbed dense model."),
     sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
     batch_size: int = typer.Option(64, "--batch-size", min=1, max=512),
     force: bool = typer.Option(False, "--force", help="Recreate the Qdrant collection before indexing."),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Index transcript chunks into local Qdrant for hybrid retrieval."""
-    settings = build_settings(data_dir)
-    config = QdrantIndexConfig(collection_name=collection, dense_model=dense_model, sparse_model=sparse_model)
+    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    config = QdrantIndexConfig(
+        collection_name=collection,
+        dense_model=dense_model,
+        sparse_model=sparse_model,
+        url=settings.qdrant_url,
+    )
     indexed = index_qdrant_chunks(
         db_path=settings.db_path,
         qdrant_dir=settings.qdrant_dir,
@@ -298,29 +313,102 @@ def hybrid_search_command(
     collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
     dense_model: str = typer.Option(DEFAULT_QDRANT_DENSE_MODEL, "--dense-model", help="FastEmbed dense model."),
     sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
+    episode_id: int | None = typer.Option(None, "--episode-id", help="Restrict results to one episode."),
+    topic: str | None = typer.Option(None, "--topic", help="Restrict results to chunks mentioning this topic/entity."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Search with Qdrant hybrid dense+sparse retrieval."""
-    settings = build_settings(data_dir)
-    config = QdrantIndexConfig(collection_name=collection, dense_model=dense_model, sparse_model=sparse_model)
+    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    config = QdrantIndexConfig(
+        collection_name=collection,
+        dense_model=dense_model,
+        sparse_model=sparse_model,
+        url=settings.qdrant_url,
+    )
     results = qdrant_hybrid_search(
         query=query,
         qdrant_dir=settings.qdrant_dir,
         config=config,
         limit=limit,
         prefetch_limit=prefetch_limit,
+        episode_id=episode_id,
+        topic=topic,
     )
     if not results:
         console.print("No hybrid results. Run index-retrieval first.")
         return
 
+    if as_json:
+        console.print_json(json.dumps(results, ensure_ascii=False))
+        return
+
     for result in results:
-        timestamp = format_timestamp(result.get("start_seconds"))
+        timestamp = format_timestamp(_optional_float(result.get("start_seconds")))
         score = float(result["score"])
         console.print(f"[bold]Episode {result['episode_id']} - {result['title']}[/bold] [{timestamp}] score={score:.3f}")
         if result.get("source_url"):
             console.print(str(result["source_url"]))
+        if result.get("entities"):
+            console.print(f"[dim]Topics: {', '.join(str(item) for item in result['entities'])}[/dim]")
         console.print(str(result["text"]))
+        console.print()
+
+
+@app.command("retrieve")
+def retrieve_command(
+    query: str = typer.Argument(..., help="Question or retrieval query."),
+    limit: int = typer.Option(5, "--limit", "-n", min=1, max=25),
+    prefetch_limit: int = typer.Option(40, "--prefetch-limit", min=1, max=500),
+    before_segments: int = typer.Option(2, "--before", min=0, max=20, help="Segments before each hit."),
+    after_segments: int = typer.Option(2, "--after", min=0, max=20, help="Segments after each hit."),
+    episode_id: int | None = typer.Option(None, "--episode-id", help="Restrict results to one episode."),
+    topic: str | None = typer.Option(None, "--topic", help="Restrict results to chunks mentioning this topic/entity."),
+    collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
+    dense_model: str = typer.Option(DEFAULT_QDRANT_DENSE_MODEL, "--dense-model", help="FastEmbed dense model."),
+    sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Retrieve hybrid evidence with expanded transcript context."""
+    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    config = QdrantIndexConfig(
+        collection_name=collection,
+        dense_model=dense_model,
+        sparse_model=sparse_model,
+        url=settings.qdrant_url,
+    )
+    evidence = retrieve_evidence(
+        query=query,
+        db_path=settings.db_path,
+        qdrant_dir=settings.qdrant_dir,
+        config=config,
+        limit=limit,
+        prefetch_limit=prefetch_limit,
+        before_segments=before_segments,
+        after_segments=after_segments,
+        episode_id=episode_id,
+        topic=topic,
+    )
+    if not evidence:
+        console.print("No evidence found. Run index-retrieval first.")
+        return
+
+    if as_json:
+        console.print_json(json.dumps(evidence, ensure_ascii=False))
+        return
+
+    for item in evidence:
+        timestamp = format_timestamp(_optional_float(item.get("start_seconds")))
+        score = float(item["score"])
+        console.print(f"[bold]Episode {item['episode_id']} - {item['title']}[/bold] [{timestamp}] score={score:.3f}")
+        if item.get("source_url"):
+            console.print(str(item["source_url"]))
+        if item.get("entities"):
+            console.print(f"[dim]Topics: {', '.join(str(entity) for entity in item['entities'])}[/dim]")
+        console.print(str(item["context_text"]))
         console.print()
 
 
@@ -345,6 +433,35 @@ def show_command(
         console.print(f"[dim]{format_timestamp(segment['start_seconds'])}[/dim] {segment['text']}")
 
 
+@app.command("context")
+def context_command(
+    chunk_id: int = typer.Argument(..., help="Transcript chunk ID."),
+    before_segments: int = typer.Option(2, "--before", min=0, max=20),
+    after_segments: int = typer.Option(2, "--after", min=0, max=20),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show transcript context around a chunk."""
+    settings = build_settings(data_dir)
+    try:
+        context = get_chunk_context(
+            settings.db_path,
+            chunk_id,
+            before_segments=before_segments,
+            after_segments=after_segments,
+        )
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if as_json:
+        console.print_json(json.dumps(context, ensure_ascii=False))
+        return
+
+    console.print(f"[bold]Episode {context['episode_id']} - {context['title']}[/bold]")
+    for segment in context["segments"]:
+        console.print(f"[dim]{format_timestamp(segment['start_seconds'])}[/dim] {segment['text']}")
+
+
 @app.command("topics")
 def topics_command(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=200),
@@ -353,9 +470,15 @@ def topics_command(
     """List candidate entities and topics."""
     settings = build_settings(data_dir)
     topics = list_topics(settings.db_path, limit=limit)
-    table = Table("Topic", "Mentions", "Episodes")
+    table = Table("Topic", "Type", "Confidence", "Mentions", "Episodes")
     for topic in topics:
-        table.add_row(str(topic["name"]), str(topic["mentions"]), str(topic["episodes"]))
+        table.add_row(
+            str(topic["name"]),
+            str(topic["entity_type"]),
+            f"{float(topic['confidence']):.2f}",
+            str(topic["mentions"]),
+            str(topic["episodes"]),
+        )
     console.print(table)
 
 
@@ -375,6 +498,39 @@ def related_command(
     for row in rows:
         table.add_row(str(row["name"]), str(row["mentions"]), str(row["shared_chunks"]), str(row["episodes"]))
     console.print(table)
+
+
+@app.command("connections")
+def connections_command(
+    topic: str | None = typer.Option(None, "--topic", help="Show only connections involving this topic/entity."),
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=200),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show automatically populated semantic connections between entities."""
+    settings = build_settings(data_dir)
+    rows = entity_connections(settings.db_path, name=topic, limit=limit)
+    if not rows:
+        console.print("No entity connections found.")
+        return
+
+    table = Table("Source", "Type", "Target", "Type", "Relation", "Weight", "Chunks")
+    for row in rows:
+        table.add_row(
+            str(row["source"]),
+            str(row["source_type"]),
+            str(row["target"]),
+            str(row["target_type"]),
+            str(row["relation_type"]),
+            f"{float(row['weight']):.2f}",
+            str(row["shared_chunks"]),
+        )
+    console.print(table)
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 if __name__ == "__main__":

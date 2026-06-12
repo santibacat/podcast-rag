@@ -121,6 +121,22 @@ uv run podcast-rag hybrid-search "reyes catolicos y unidad dinastica"
 
 Status: implemented with local Qdrant through `index-retrieval` and `hybrid-search`. The previous SQLite-only semantic index remains as a fallback/debug path.
 
+Additional retrieval features implemented:
+
+- Qdrant payloads include episode metadata, timestamps, text, and candidate entities.
+- `hybrid-search` supports filtering by `--episode-id` and `--topic`.
+- `retrieve` returns hybrid results with expanded transcript context.
+- `context` shows neighboring transcript segments around a chunk.
+- Qdrant server mode is supported with `QDRANT_URL` or `--qdrant-url`.
+- Contextual entity extraction stores inferred type, confidence, and evidence.
+- Entity co-occurrence relations are populated automatically into `entity_relations`.
+
+Remaining retrieval work:
+
+- Add reranking for top-k evidence.
+- Add graph export and entity-aware scoring boosts.
+- Add an agent-facing tool layer around `retrieve`, `related`, and `context`.
+
 ### Milestone 5: Entity and Knowledge Graph
 
 Features:

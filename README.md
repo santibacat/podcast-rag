@@ -16,6 +16,7 @@ uv run podcast-rag ingest-url "https://youtube.com/playlist?list=..." --playlist
 uv run podcast-rag search "Felipe II"
 uv run podcast-rag index-retrieval
 uv run podcast-rag hybrid-search "Felipe Escorial simbolo religioso"
+uv run podcast-rag connections --topic "Francisco Pizarro"
 uv run podcast-rag index-embeddings
 uv run podcast-rag semantic-search "monarquia y simbolos religiosos"
 uv run podcast-rag related "Felipe"
@@ -74,6 +75,28 @@ uv run podcast-rag hybrid-search "donde se habla de poder religioso y monarquia"
 ```
 
 `index-retrieval` is the recommended retrieval path. It stores transcript chunks in local Qdrant under `data/qdrant` with both dense multilingual embeddings and sparse BM25 vectors, then `hybrid-search` queries both and fuses results with RRF.
+
+Local Qdrant storage is single-process. Run Qdrant-backed CLI commands sequentially for the same `--data-dir`; use a Qdrant server later if you need concurrent indexing/search.
+
+Use a Qdrant server instead of local embedded storage:
+
+```bash
+QDRANT_URL="http://localhost:6333" uv run podcast-rag index-retrieval
+uv run podcast-rag hybrid-search "Pizarro Peru" --qdrant-url "http://localhost:6333"
+```
+
+Retrieve evidence with expanded transcript context:
+
+```bash
+uv run podcast-rag retrieve "donde aparece El Escorial como simbolo politico" --topic "El Escorial" --before 2 --after 2
+```
+
+Explore automatically detected entity connections:
+
+```bash
+uv run podcast-rag topics
+uv run podcast-rag connections --topic "Francisco Pizarro"
+```
 
 The older SQLite-only semantic index is still available for comparison and simple debugging:
 
