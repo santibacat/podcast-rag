@@ -1,0 +1,26 @@
+[project]
+name = "podcast-rag"
+version = "0.1.0"
+description = "Local-first RAG tooling for podcasts and videos."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+podcast-rag = "podcast_rag.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
