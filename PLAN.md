@@ -174,6 +174,19 @@ Commands:
 uv run podcast-rag ask "Where does the podcast connect Carlos V with the Comuneros?"
 ```
 
+Status: first local agentic retrieval layer is implemented without external LLM dependency:
+
+- `agent_tools.py` exposes reusable tools for episodes, topics, connections, related topics, lexical search, hybrid retrieval, and context.
+- `ask` runs a local planning workflow: infer topic, retrieve evidence, inspect connections, and produce a research brief.
+- `mcp_server.py` exposes the same tools through MCP for external agents.
+
+Remaining agentic work:
+
+- Add LLM synthesis on top of the evidence brief.
+- Add tool-call logging and run traces.
+- Add configurable policies for when to call `retrieve`, `connections`, `context`, and lexical fallback.
+- Add answer citations with timestamps and source URLs.
+
 ## Development Priorities
 
 1. Preserve timestamps throughout the pipeline.

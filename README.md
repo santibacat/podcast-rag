@@ -89,6 +89,7 @@ Retrieve evidence with expanded transcript context:
 
 ```bash
 uv run podcast-rag retrieve "donde aparece El Escorial como simbolo politico" --topic "El Escorial" --before 2 --after 2
+uv run podcast-rag ask "Que relacion hay entre Francisco Pizarro y Peru?"
 ```
 
 Explore automatically detected entity connections:
@@ -97,6 +98,14 @@ Explore automatically detected entity connections:
 uv run podcast-rag topics
 uv run podcast-rag connections --topic "Francisco Pizarro"
 ```
+
+Run the MCP server for external agents:
+
+```bash
+uv run podcast-rag-mcp
+```
+
+The MCP server exposes `episodes`, `topics`, `connections`, `related`, `context`, `lexical_search`, `retrieve`, and `research`.
 
 The older SQLite-only semantic index is still available for comparison and simple debugging:
 

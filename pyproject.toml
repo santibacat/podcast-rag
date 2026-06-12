@@ -13,10 +13,12 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "sentence-transformers>=3.0.0",
     "qdrant-client[fastembed]>=1.14.2",
+    "mcp>=1.12.0",
 ]
 
 [project.scripts]
 podcast-rag = "podcast_rag.cli:app"
+podcast-rag-mcp = "podcast_rag.mcp_server:main"
 
 [dependency-groups]
 dev = [

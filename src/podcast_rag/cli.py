@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from podcast_rag.agent_tools import AgentToolConfig, agentic_research
 from podcast_rag.config import build_settings
 from podcast_rag.db import add_episode, init_db
 from podcast_rag.discovery import PlaylistMode, PlaylistOrder, discover_sources
@@ -410,6 +411,44 @@ def retrieve_command(
             console.print(f"[dim]Topics: {', '.join(str(entity) for entity in item['entities'])}[/dim]")
         console.print(str(item["context_text"]))
         console.print()
+
+
+@app.command("ask")
+def ask_command(
+    question: str = typer.Argument(..., help="Question to investigate with local retrieval tools."),
+    limit: int = typer.Option(5, "--limit", "-n", min=1, max=25),
+    collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
+    dense_model: str = typer.Option(DEFAULT_QDRANT_DENSE_MODEL, "--dense-model", help="FastEmbed dense model."),
+    sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Run a local agentic retrieval workflow over the indexed podcast corpus."""
+    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    result = agentic_research(
+        question=question,
+        limit=limit,
+        config=AgentToolConfig(
+            data_dir=data_dir,
+            qdrant_url=settings.qdrant_url,
+            collection=collection,
+            dense_model=dense_model,
+            sparse_model=sparse_model,
+        ),
+    )
+    if as_json:
+        console.print_json(json.dumps(result, ensure_ascii=False))
+        return
+
+    console.print("[bold]Agentic Retrieval Brief[/bold]")
+    console.print(result["brief"])
+    if result["tool_calls"]:
+        console.print()
+        table = Table("Tool", "Topic", "Results")
+        for call in result["tool_calls"]:
+            table.add_row(str(call["tool"]), str(call.get("topic") or ""), str(call.get("result_count", "")))
+        console.print(table)
 
 
 @app.command("show")
