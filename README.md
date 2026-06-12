@@ -14,6 +14,11 @@ uv run podcast-rag discover-url "https://example.com/podcast-page"
 uv run podcast-rag ingest-url "https://youtube.com/..." --playlist-mode single
 uv run podcast-rag ingest-url "https://youtube.com/playlist?list=..." --playlist-mode all --playlist-order newest --max-items 5
 uv run podcast-rag search "Felipe II"
+uv run podcast-rag index-retrieval
+uv run podcast-rag hybrid-search "Felipe Escorial simbolo religioso"
+uv run podcast-rag index-embeddings
+uv run podcast-rag semantic-search "monarquia y simbolos religiosos"
+uv run podcast-rag related "Felipe"
 uv run podcast-rag episodes
 ```
 
@@ -46,6 +51,7 @@ Current coverage includes:
 - idempotent episode ingestion by `source_url`
 - direct media URL detection
 - mocked URL ingestion from discovery to searchable transcript
+- embedding vector storage and semantic search with a deterministic test embedder
 
 Preview real URLs without downloading or transcribing:
 
@@ -58,4 +64,20 @@ Full ingestion downloads audio and runs local Whisper, so it can take a while:
 
 ```bash
 uv run podcast-rag ingest-url "https://memoriasdeuntambor.com/96-el-asesinato-de-pizarro" --playlist-mode single --language es --whisper-model small
+```
+
+Build semantic search after transcripts are imported:
+
+```bash
+uv run podcast-rag index-retrieval
+uv run podcast-rag hybrid-search "donde se habla de poder religioso y monarquia"
+```
+
+`index-retrieval` is the recommended retrieval path. It stores transcript chunks in local Qdrant under `data/qdrant` with both dense multilingual embeddings and sparse BM25 vectors, then `hybrid-search` queries both and fuses results with RRF.
+
+The older SQLite-only semantic index is still available for comparison and simple debugging:
+
+```bash
+uv run podcast-rag index-embeddings
+uv run podcast-rag semantic-search "donde se habla de poder religioso y monarquia"
 ```

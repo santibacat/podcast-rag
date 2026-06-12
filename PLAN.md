@@ -33,8 +33,8 @@ Core components:
 Storage:
 
 - SQLite for episodes, transcript segments, chunks, entities, and mentions.
+- Qdrant local storage for dense+sparse retrieval indexes.
 - Local filesystem for downloaded media, extracted audio, and raw transcripts.
-- Later: ChromaDB or another vector store for semantic retrieval.
 
 ## CLI Milestones
 
@@ -102,18 +102,24 @@ Status: implemented through `ingest-url` and `transcribe-audio`.
 Features:
 
 - Chunk transcripts semantically.
-- Generate embeddings with `sentence-transformers`.
-- Store vectors with ChromaDB.
+- Generate dense embeddings with FastEmbed/Qdrant.
+- Generate sparse BM25 vectors with FastEmbed/Qdrant.
+- Store retrieval vectors in local Qdrant.
 - Add hybrid retrieval:
   - lexical score
   - semantic score
-  - entity/topic boost
+  - RRF fusion
+  - later entity/topic boost
 
 Commands:
 
 ```bash
 uv run podcast-rag semantic-search "reyes catolicos y unidad dinastica"
+uv run podcast-rag index-retrieval
+uv run podcast-rag hybrid-search "reyes catolicos y unidad dinastica"
 ```
+
+Status: implemented with local Qdrant through `index-retrieval` and `hybrid-search`. The previous SQLite-only semantic index remains as a fallback/debug path.
 
 ### Milestone 5: Entity and Knowledge Graph
 
@@ -132,12 +138,14 @@ uv run podcast-rag related "Guerra de Sucesion"
 uv run podcast-rag export-graph graph.json
 ```
 
+Status: candidate topic extraction and `related` co-occurrence lookup are implemented. Richer entity classification and graph export are pending.
+
 ### Milestone 6: Agentic Workflow
 
 Features:
 
 - Add tool abstractions for:
-  - transcript search
+  - hybrid transcript search
   - entity lookup
   - timestamp context expansion
   - topic summarization

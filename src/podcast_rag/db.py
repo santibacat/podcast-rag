@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS entity_mentions (
     chunk_id INTEGER REFERENCES transcript_chunks(id) ON DELETE CASCADE,
     count INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+    chunk_id INTEGER NOT NULL REFERENCES transcript_chunks(id) ON DELETE CASCADE,
+    model_name TEXT NOT NULL,
+    dimension INTEGER NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chunk_id, model_name)
+);
 """
 
 

@@ -86,3 +86,34 @@ def list_topics(db_path: Path, limit: int = 50) -> list[dict[str, object]]:
             (limit,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def related_topics(db_path: Path, name: str, limit: int = 25) -> list[dict[str, object]]:
+    init_db(db_path)
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            WITH target AS (
+                SELECT id FROM entities WHERE name = ?
+            ),
+            target_chunks AS (
+                SELECT DISTINCT chunk_id
+                FROM entity_mentions
+                WHERE entity_id = (SELECT id FROM target)
+            )
+            SELECT
+                entities.name,
+                SUM(entity_mentions.count) AS mentions,
+                COUNT(DISTINCT entity_mentions.chunk_id) AS shared_chunks,
+                COUNT(DISTINCT entity_mentions.episode_id) AS episodes
+            FROM entity_mentions
+            JOIN entities ON entities.id = entity_mentions.entity_id
+            WHERE entity_mentions.chunk_id IN (SELECT chunk_id FROM target_chunks)
+              AND entities.name != ?
+            GROUP BY entities.id
+            ORDER BY shared_chunks DESC, mentions DESC, entities.name
+            LIMIT ?
+            """,
+            (name, name, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]

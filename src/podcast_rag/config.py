@@ -24,6 +24,10 @@ class Settings:
     def transcript_dir(self) -> Path:
         return self.data_dir / "transcripts"
 
+    @property
+    def qdrant_dir(self) -> Path:
+        return self.data_dir / "qdrant"
+
 
 def build_settings(data_dir: Path | None = None) -> Settings:
     return Settings(data_dir=data_dir or Path("data"))
