@@ -8,9 +8,23 @@ from rich.console import Console
 from rich.table import Table
 
 from podcast_rag.agent_tools import AgentToolConfig, agentic_research
+from podcast_rag.analytics import (
+    corpus_stats,
+    entity_profile,
+    entity_timeline,
+    episode_insights,
+    graph_export,
+    profile_explanation,
+    quality_report,
+    system_status,
+    topic_episode_matrix,
+)
+from podcast_rag.chunking import describe_chunking_strategy
 from podcast_rag.config import build_settings
-from podcast_rag.db import add_episode, init_db
+from podcast_rag.corpora import create_corpus, get_corpus, load_corpora, resolve_corpus_settings
+from podcast_rag.db import add_episode, init_db, rebuild_entities
 from podcast_rag.discovery import PlaylistMode, PlaylistOrder, discover_sources
+from podcast_rag.domain_profiles import DEFAULT_DOMAIN_PROFILE, list_domain_profiles
 from podcast_rag.embeddings import DEFAULT_EMBEDDING_MODEL, build_embedder, rebuild_chunk_embeddings, semantic_search
 from podcast_rag.ingest import ingest_url
 from podcast_rag.retrieval_qdrant import (
@@ -43,12 +57,111 @@ def data_dir_option() -> Path:
     return typer.Option(Path("data"), "--data-dir", help="Directory for SQLite DB and local artifacts.")
 
 
+def corpus_option() -> str | None:
+    return typer.Option(None, "--corpus", help="Registered corpus id. Uses --data-dir directly when omitted.")
+
+
 @app.command("init-db")
 def init_db_command(data_dir: Path = data_dir_option()) -> None:
     """Create the local SQLite database."""
     settings = build_settings(data_dir)
     init_db(settings.db_path)
     console.print(f"Initialized database at [bold]{settings.db_path}[/bold]")
+
+
+@app.command("corpora")
+def corpora_command(data_dir: Path = data_dir_option()) -> None:
+    """List registered corpus configurations."""
+    table = Table("ID", "Name", "Data Dir", "Profile", "Qdrant", "Tags")
+    table.add_row("default", "Default corpus", str(data_dir), "", "", "")
+    for corpus in load_corpora(data_dir):
+        table.add_row(
+            corpus.id,
+            corpus.name,
+            corpus.data_dir,
+            str(corpus.domain_profile or ""),
+            str(corpus.qdrant_url or ""),
+            ", ".join(corpus.tags),
+        )
+    console.print(table)
+
+
+@app.command("create-corpus")
+def create_corpus_command(
+    corpus_id: str = typer.Argument(..., help="Stable corpus id, e.g. memorias-tambor."),
+    name: str | None = typer.Option(None, "--name", help="Display name."),
+    corpus_data_dir: Path | None = typer.Option(None, "--corpus-data-dir", help="Storage directory for this corpus."),
+    description: str | None = typer.Option(None, "--description"),
+    domain_profile: str | None = typer.Option(None, "--domain-profile"),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url"),
+    tag: list[str] | None = typer.Option(None, "--tag", help="Repeatable corpus tag."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Create a registered corpus configuration."""
+    try:
+        corpus = create_corpus(
+            base_data_dir=data_dir,
+            corpus_id=corpus_id,
+            name=name,
+            data_dir=corpus_data_dir,
+            description=description,
+            domain_profile=domain_profile,
+            qdrant_url=qdrant_url,
+            tags=tag or [],
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    init_db(Path(corpus.data_dir) / "podcast_rag.sqlite3")
+    console.print(f"Created corpus [bold]{corpus.id}[/bold] at [bold]{corpus.data_dir}[/bold].")
+
+
+@app.command("domain-profiles")
+def domain_profiles_command() -> None:
+    """List available entity extraction domain profiles."""
+    table = Table("Profile")
+    for profile in list_domain_profiles():
+        table.add_row(profile)
+    console.print(table)
+
+
+@app.command("profile-info")
+def profile_info_command(
+    domain_profile: str = typer.Argument(DEFAULT_DOMAIN_PROFILE, help="Domain profile name."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Explain a domain profile's entity extraction rules."""
+    try:
+        profile = profile_explanation(domain_profile)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if as_json:
+        console.print_json(json.dumps(profile, ensure_ascii=False))
+        return
+
+    console.print(f"[bold]{profile['name']}[/bold]")
+    table = Table("Rule Group", "Values")
+    for key, value in profile.items():
+        if key == "name":
+            continue
+        if isinstance(value, list):
+            rendered = ", ".join(str(item) for item in value[:40])
+        else:
+            rendered = str(value)
+        table.add_row(key, rendered)
+    console.print(table)
+
+
+@app.command("chunking-info")
+def chunking_info_command(as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")) -> None:
+    """Explain the current transcript chunking strategy."""
+    info = describe_chunking_strategy()
+    if as_json:
+        console.print_json(json.dumps(info, ensure_ascii=False))
+        return
+    table = Table("Setting", "Value")
+    for key, value in info.items():
+        table.add_row(key, str(value))
+    console.print(table)
 
 
 @app.command("ingest-transcript")
@@ -58,10 +171,14 @@ def ingest_transcript_command(
     source_url: str | None = typer.Option(None, "--source-url", help="Original media URL."),
     author: str | None = typer.Option(None, "--author", help="Podcast author or channel."),
     language: str | None = typer.Option(None, "--language", help="Transcript language code."),
+    domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Import a plain text or timestamped transcript."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
+    if corpus and domain_profile == DEFAULT_DOMAIN_PROFILE:
+        domain_profile = get_corpus(data_dir, corpus).domain_profile or domain_profile
     segments = parse_transcript_file(transcript_path)
     if not segments:
         raise typer.BadParameter("Transcript did not contain any text.")
@@ -72,8 +189,29 @@ def ingest_transcript_command(
         source_url=source_url,
         author=author,
         language=language,
+        domain_profile=domain_profile,
     )
     console.print(f"Imported episode [bold]{episode_id}[/bold] with {len(segments)} transcript segments.")
+
+
+@app.command("rebuild-entities")
+def rebuild_entities_command(
+    domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Rebuild entities, mentions, and relations for all chunks using a domain profile."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    if corpus and domain_profile == DEFAULT_DOMAIN_PROFILE:
+        domain_profile = get_corpus(data_dir, corpus).domain_profile or domain_profile
+    try:
+        result = rebuild_entities(settings.db_path, domain_profile=domain_profile)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(
+        f"Rebuilt entities with [bold]{domain_profile}[/bold]: "
+        f"{result['entities']} entities, {result['mentions']} mentions, {result['relations']} relations."
+    )
 
 
 @app.command("ingest-url")
@@ -99,11 +237,15 @@ def ingest_url_command(
     device: str = typer.Option("auto", "--device", help="Whisper device: auto, cpu, cuda, or mps."),
     compute_type: str = typer.Option("auto", "--compute-type", help="Whisper compute type."),
     language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
     no_skip_existing: bool = typer.Option(False, "--no-skip-existing", help="Reprocess URLs already in the DB."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Download URL audio, transcribe it locally, and import the transcript."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
+    if corpus and domain_profile == DEFAULT_DOMAIN_PROFILE:
+        domain_profile = get_corpus(data_dir, corpus).domain_profile or domain_profile
     results = ingest_url(
         url=url,
         settings=settings,
@@ -114,6 +256,7 @@ def ingest_url_command(
         device=device,
         compute_type=compute_type,
         language=language,
+        domain_profile=domain_profile,
         skip_existing=not no_skip_existing,
     )
     table = Table("Status", "Episode", "Title", "Source", "Message")
@@ -176,10 +319,14 @@ def transcribe_audio_command(
     device: str = typer.Option("auto", "--device", help="Whisper device: auto, cpu, cuda, or mps."),
     compute_type: str = typer.Option("auto", "--compute-type", help="Whisper compute type."),
     language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Transcribe a local audio file with faster-whisper and import it."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
+    if corpus and domain_profile == DEFAULT_DOMAIN_PROFILE:
+        domain_profile = get_corpus(data_dir, corpus).domain_profile or domain_profile
     segments, detected_language = transcribe_audio(
         audio_path,
         model_size=whisper_model,
@@ -195,14 +342,15 @@ def transcribe_audio_command(
         source_url=source_url,
         author=author,
         language=language or detected_language,
+        domain_profile=domain_profile,
     )
     console.print(f"Transcribed and imported episode [bold]{episode_id}[/bold] with {len(segments)} segments.")
 
 
 @app.command("episodes")
-def episodes_command(data_dir: Path = data_dir_option()) -> None:
+def episodes_command(corpus: str | None = corpus_option(), data_dir: Path = data_dir_option()) -> None:
     """List ingested episodes."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     episodes = list_episodes(settings.db_path)
     table = Table("ID", "Title", "Segments", "Author", "Language", "Source")
     for episode in episodes:
@@ -221,10 +369,11 @@ def episodes_command(data_dir: Path = data_dir_option()) -> None:
 def search_command(
     query: str = typer.Argument(..., help="FTS query. Use quotes for phrases."),
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Search transcript chunks."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     results = search_chunks(settings.db_path, query=query, limit=limit)
     if not results:
         console.print("No results.")
@@ -286,10 +435,11 @@ def index_retrieval_command(
     qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
     batch_size: int = typer.Option(64, "--batch-size", min=1, max=512),
     force: bool = typer.Option(False, "--force", help="Recreate the Qdrant collection before indexing."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Index transcript chunks into local Qdrant for hybrid retrieval."""
-    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    settings = resolve_corpus_settings(data_dir, corpus, qdrant_url=qdrant_url)
     config = QdrantIndexConfig(
         collection_name=collection,
         dense_model=dense_model,
@@ -318,10 +468,11 @@ def hybrid_search_command(
     episode_id: int | None = typer.Option(None, "--episode-id", help="Restrict results to one episode."),
     topic: str | None = typer.Option(None, "--topic", help="Restrict results to chunks mentioning this topic/entity."),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Search with Qdrant hybrid dense+sparse retrieval."""
-    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    settings = resolve_corpus_settings(data_dir, corpus, qdrant_url=qdrant_url)
     config = QdrantIndexConfig(
         collection_name=collection,
         dense_model=dense_model,
@@ -371,10 +522,11 @@ def retrieve_command(
     sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
     qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Retrieve hybrid evidence with expanded transcript context."""
-    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    settings = resolve_corpus_settings(data_dir, corpus, qdrant_url=qdrant_url)
     config = QdrantIndexConfig(
         collection_name=collection,
         dense_model=dense_model,
@@ -422,15 +574,16 @@ def ask_command(
     sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
     qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Run a local agentic retrieval workflow over the indexed podcast corpus."""
-    settings = build_settings(data_dir, qdrant_url=qdrant_url)
+    settings = resolve_corpus_settings(data_dir, corpus, qdrant_url=qdrant_url)
     result = agentic_research(
         question=question,
         limit=limit,
         config=AgentToolConfig(
-            data_dir=data_dir,
+            data_dir=settings.data_dir,
             qdrant_url=settings.qdrant_url,
             collection=collection,
             dense_model=dense_model,
@@ -454,10 +607,11 @@ def ask_command(
 @app.command("show")
 def show_command(
     episode_id: int = typer.Argument(..., help="Episode ID."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Show an episode transcript."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     try:
         episode, segments = get_episode_segments(settings.db_path, episode_id)
     except LookupError as exc:
@@ -478,10 +632,11 @@ def context_command(
     before_segments: int = typer.Option(2, "--before", min=0, max=20),
     after_segments: int = typer.Option(2, "--after", min=0, max=20),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Show transcript context around a chunk."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     try:
         context = get_chunk_context(
             settings.db_path,
@@ -504,10 +659,11 @@ def context_command(
 @app.command("topics")
 def topics_command(
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=200),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """List candidate entities and topics."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     topics = list_topics(settings.db_path, limit=limit)
     table = Table("Topic", "Type", "Confidence", "Mentions", "Episodes")
     for topic in topics:
@@ -525,10 +681,11 @@ def topics_command(
 def related_command(
     topic: str = typer.Argument(..., help="Topic/entity name, e.g. 'Felipe II'."),
     limit: int = typer.Option(25, "--limit", "-n", min=1, max=100),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Show topics that co-occur with a topic in transcript chunks."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     rows = related_topics(settings.db_path, topic, limit=limit)
     if not rows:
         console.print("No related topics found.")
@@ -543,10 +700,11 @@ def related_command(
 def connections_command(
     topic: str | None = typer.Option(None, "--topic", help="Show only connections involving this topic/entity."),
     limit: int = typer.Option(50, "--limit", "-n", min=1, max=200),
+    corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
 ) -> None:
     """Show automatically populated semantic connections between entities."""
-    settings = build_settings(data_dir)
+    settings = resolve_corpus_settings(data_dir, corpus)
     rows = entity_connections(settings.db_path, name=topic, limit=limit)
     if not rows:
         console.print("No entity connections found.")
@@ -564,6 +722,260 @@ def connections_command(
             str(row["shared_chunks"]),
         )
     console.print(table)
+
+
+@app.command("corpus-stats")
+def corpus_stats_command(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show corpus-wide analytics and density metrics."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    stats = corpus_stats(settings.db_path)
+    if as_json:
+        console.print_json(json.dumps(stats, ensure_ascii=False))
+        return
+
+    counts_table = Table("Metric", "Value")
+    for key, value in stats["counts"].items():
+        counts_table.add_row(key, str(value))
+    counts_table.add_row("avg_entities_per_episode", f"{float(stats['avg_entities_per_episode']):.2f}")
+    console.print(counts_table)
+
+    types_table = Table("Entity Type", "Count")
+    for row in stats["entity_types"]:
+        types_table.add_row(str(row["entity_type"]), str(row["count"]))
+    console.print(types_table)
+
+    episodes_table = Table("Episode", "Title", "Unique Entities", "Mentions", "Chunks")
+    for row in stats["richest_episodes"]:
+        episodes_table.add_row(
+            str(row["episode_id"]),
+            str(row["title"]),
+            str(row["unique_entities"]),
+            str(row["mentions"]),
+            str(row["chunks"]),
+        )
+    console.print(episodes_table)
+
+
+@app.command("entity-profile")
+def entity_profile_command(
+    name: str = typer.Argument(..., help="Entity/topic name."),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show mentions, timestamps, episodes, and connections for an entity."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    try:
+        profile = entity_profile(settings.db_path, name=name, limit=limit)
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if as_json:
+        console.print_json(json.dumps(profile, ensure_ascii=False))
+        return
+
+    entity = profile["entity"]
+    console.print(
+        f"[bold]{entity['name']}[/bold] type={entity['entity_type']} confidence={float(entity['confidence']):.2f}"
+    )
+    if entity.get("evidence"):
+        console.print(f"[dim]{entity['evidence']}[/dim]")
+
+    mentions_table = Table("Episode", "Title", "Time", "Chunk", "Text")
+    for row in profile["mentions"]:
+        mentions_table.add_row(
+            str(row["episode_id"]),
+            str(row["title"]),
+            format_timestamp(_optional_float(row["start_seconds"])),
+            str(row["chunk_id"]),
+            str(row["text"])[:120],
+        )
+    console.print(mentions_table)
+
+    connections_table = Table("Source", "Target", "Relation", "Weight", "Chunks")
+    for row in profile["connections"]:
+        connections_table.add_row(
+            str(row["source"]),
+            str(row["target"]),
+            str(row["relation_type"]),
+            f"{float(row['weight']):.2f}",
+            str(row["shared_chunks"]),
+        )
+    console.print(connections_table)
+
+
+@app.command("timeline")
+def timeline_command(
+    topic: str | None = typer.Option(None, "--topic", help="Restrict to a topic/entity."),
+    episode_id: int | None = typer.Option(None, "--episode-id", help="Restrict to one episode."),
+    limit: int = typer.Option(200, "--limit", "-n", min=1, max=1000),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show an entity/topic timeline across episodes and timestamps."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    rows = entity_timeline(settings.db_path, topic=topic, episode_id=episode_id, limit=limit)
+    if as_json:
+        console.print_json(json.dumps(rows, ensure_ascii=False))
+        return
+
+    table = Table("Episode", "Title", "Time", "Topic", "Type", "Count", "Text")
+    for row in rows:
+        table.add_row(
+            str(row["episode_id"]),
+            str(row["title"]),
+            format_timestamp(_optional_float(row["start_seconds"])),
+            str(row["name"]),
+            str(row["entity_type"]),
+            str(row["count"]),
+            str(row["text"])[:90],
+        )
+    console.print(table)
+
+
+@app.command("episode-insights")
+def episode_insights_command(
+    episode_id: int = typer.Argument(..., help="Episode ID."),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, max=100),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show granular analytics for one episode."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    try:
+        insights = episode_insights(settings.db_path, episode_id=episode_id, limit=limit)
+    except LookupError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if as_json:
+        console.print_json(json.dumps(insights, ensure_ascii=False))
+        return
+
+    console.print(f"[bold]Episode {episode_id}: {insights['episode']['title']}[/bold]")
+    top_table = Table("Entity", "Type", "Mentions", "Chunks")
+    for row in insights["top_entities"]:
+        top_table.add_row(str(row["name"]), str(row["entity_type"]), str(row["mentions"]), str(row["chunks"]))
+    console.print(top_table)
+
+    density_table = Table("Chunk", "Time", "Unique Entities", "Text")
+    for row in insights["entity_density"]:
+        density_table.add_row(
+            str(row["chunk_id"]),
+            format_timestamp(_optional_float(row["start_seconds"])),
+            str(row["unique_entities"]),
+            str(row["text"])[:100],
+        )
+    console.print(density_table)
+
+
+@app.command("topic-matrix")
+def topic_matrix_command(
+    limit_entities: int = typer.Option(50, "--limit-entities", min=1, max=500),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show entity-by-episode mention matrix data."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    matrix = topic_episode_matrix(settings.db_path, limit_entities=limit_entities)
+    if as_json:
+        console.print_json(json.dumps(matrix, ensure_ascii=False))
+        return
+
+    table = Table("Entity", "Type", "Total Mentions", "Episode Mentions")
+    episode_titles = {int(row["id"]): row["title"] for row in matrix["episodes"]}
+    cells_by_entity: dict[int, list[str]] = {}
+    for cell in matrix["cells"]:
+        cells_by_entity.setdefault(int(cell["entity_id"]), []).append(
+            f"{episode_titles.get(int(cell['episode_id']), cell['episode_id'])}: {cell['mentions']}"
+        )
+    for entity in matrix["entities"]:
+        table.add_row(
+            str(entity["name"]),
+            str(entity["entity_type"]),
+            str(entity["mentions"]),
+            "; ".join(cells_by_entity.get(int(entity["id"]), [])),
+        )
+    console.print(table)
+
+
+@app.command("graph-export")
+def graph_export_command(
+    output_path: Path = typer.Argument(..., help="Output JSON path."),
+    min_weight: float = typer.Option(0.0, "--min-weight", min=0.0),
+    limit: int = typer.Option(1000, "--limit", min=1),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Export entity graph JSON for visualization."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    graph = graph_export(settings.db_path, min_weight=min_weight, limit=limit)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"Exported graph with {len(graph['nodes'])} nodes and {len(graph['edges'])} edges to [bold]{output_path}[/bold].")
+
+
+@app.command("quality-report")
+def quality_report_command(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Show quality/debug signals for transcripts, entities, and chunks."""
+    settings = resolve_corpus_settings(data_dir, corpus)
+    report = quality_report(settings.db_path)
+    if as_json:
+        console.print_json(json.dumps(report, ensure_ascii=False))
+        return
+
+    for section, rows in report.items():
+        console.print(f"[bold]{section}[/bold]: {len(rows)}")
+        table = Table(*([str(key) for key in rows[0].keys()] if rows else ["No issues"]))
+        for row in rows:
+            table.add_row(*(str(value)[:100] for value in row.values()))
+        console.print(table)
+
+
+@app.command("system-status")
+def system_status_command(
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Explain corpus/index state and recommended next actions."""
+    settings = resolve_corpus_settings(data_dir, corpus, qdrant_url=qdrant_url)
+    status = system_status(settings.db_path, settings.data_dir, qdrant_url=settings.qdrant_url)
+    if as_json:
+        console.print_json(json.dumps(status, ensure_ascii=False))
+        return
+
+    console.print("[bold]Podcast RAG Status[/bold]")
+    console.print(f"Data dir: {status['data_dir']}")
+    console.print(f"SQLite: {status['sqlite_db']}")
+    console.print(f"Qdrant mode: {status['qdrant']['mode']}")
+
+    counts_table = Table("Metric", "Value")
+    for key, value in status["stats"]["counts"].items():
+        counts_table.add_row(key, str(value))
+    console.print(counts_table)
+
+    quality_table = Table("Quality Signal", "Count")
+    for key, value in status["quality_counts"].items():
+        quality_table.add_row(key, str(value))
+    console.print(quality_table)
+
+    rec_table = Table("Recommended Next Action")
+    for recommendation in status["recommendations"]:
+        rec_table.add_row(str(recommendation))
+    console.print(rec_table)
 
 
 def _optional_float(value: object) -> float | None:

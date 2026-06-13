@@ -28,6 +28,7 @@ Core components:
 - `podcast_rag.chunking`: transcript chunking with timestamp preservation.
 - `podcast_rag.search`: lexical search over transcript chunks.
 - `podcast_rag.entities`: early entity/topic extraction.
+- `podcast_rag.domain_profiles`: configurable domain-specific entity extraction profiles.
 - `podcast_rag.models`: shared dataclasses and domain objects.
 
 Storage:
@@ -129,13 +130,21 @@ Additional retrieval features implemented:
 - `context` shows neighboring transcript segments around a chunk.
 - Qdrant server mode is supported with `QDRANT_URL` or `--qdrant-url`.
 - Contextual entity extraction stores inferred type, confidence, and evidence.
+- Domain profiles make entity extraction configurable across corpora.
 - Entity co-occurrence relations are populated automatically into `entity_relations`.
+- Registered corpora allow separate podcast collections plus combined dashboard/API views.
 
 Remaining retrieval work:
 
 - Add reranking for top-k evidence.
-- Add graph export and entity-aware scoring boosts.
-- Add an agent-facing tool layer around `retrieve`, `related`, and `context`.
+- Add entity-aware scoring boosts.
+
+Domain profile status:
+
+- Implemented profiles: `generic_es`, `history_es`, `generic_en`, `custom`.
+- Ingestion supports `--domain-profile`.
+- Entity extraction can be rebuilt with `rebuild-entities`.
+- Domain-specific hints should live in `domain_profiles.py`, not in core extraction logic.
 
 ### Milestone 5: Entity and Knowledge Graph
 
@@ -178,7 +187,8 @@ Status: first local agentic retrieval layer is implemented without external LLM 
 
 - `agent_tools.py` exposes reusable tools for episodes, topics, connections, related topics, lexical search, hybrid retrieval, and context.
 - `ask` runs a local planning workflow: infer topic, retrieve evidence, inspect connections, and produce a research brief.
-- `mcp_server.py` exposes the same tools through MCP for external agents.
+- `mcp_server.py` exposes query, analytics, corpus management, URL discovery, ingestion, entity rebuild, Qdrant indexing, and cross-corpus research tools for external agents.
+- External agents can now call MCP tools to create a corpus, discover a podcast page/playlist, ingest/transcribe it, build retrieval indexes, and research it.
 
 Remaining agentic work:
 
@@ -186,6 +196,54 @@ Remaining agentic work:
 - Add tool-call logging and run traces.
 - Add configurable policies for when to call `retrieve`, `connections`, `context`, and lexical fallback.
 - Add answer citations with timestamps and source URLs.
+
+### Milestone 6.5: Multi-Corpus Workspaces
+
+Features:
+
+- Register named podcast/video corpora under one dashboard root.
+- Keep corpus state isolated: SQLite DB, media, transcripts, and local Qdrant storage.
+- Reuse the same dashboard for one corpus or a combined `all` view.
+- Let MCP agents operate by corpus id instead of manual data paths.
+
+Commands:
+
+```bash
+uv run podcast-rag create-corpus memorias --name "Memorias de un Tambor" --domain-profile history_es
+uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode all --corpus memorias
+uv run podcast-rag index-retrieval --corpus memorias
+uv run podcast-rag-dashboard --data-dir data --port 8765
+```
+
+Status: implemented through `corpora.json`, CLI `--corpus` support, dashboard `?corpus=...`, MCP corpus tools, and merged dashboard views for `corpus=all`.
+
+### Milestone 7: Analytics Layer Before Dashboard
+
+Purpose:
+
+Build granular, dashboard-ready analytics so the UI can reveal structure in the corpus, not only provide chat/search.
+
+Commands:
+
+```bash
+uv run podcast-rag corpus-stats
+uv run podcast-rag entity-profile "Francisco Pizarro"
+uv run podcast-rag timeline --topic "Francisco Pizarro"
+uv run podcast-rag episode-insights 1
+uv run podcast-rag graph-export graph.json
+uv run podcast-rag quality-report
+```
+
+Features:
+
+- Corpus-wide counts and density metrics.
+- Entity profiles with mentions, timestamps, representative chunks, and connections.
+- Entity/topic timelines across episodes and timestamps.
+- Episode-level granular insights.
+- Graph JSON export for future visualization.
+- Quality/debug report for uncertain entities, missing timestamps, empty chunks, and indexing gaps.
+
+Status: implemented as a React/Vite dashboard served by the Python dashboard API. Continue improving graph analysis, corpus metrics, and agent-facing drilldowns before adding heavier frontend dependencies.
 
 ## Development Priorities
 

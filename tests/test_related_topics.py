@@ -12,6 +12,7 @@ def test_related_topics_uses_shared_chunks(tmp_path):
             TranscriptSegment("Felipe II visita El Escorial.", 1, 5),
             TranscriptSegment("La Armada Invencible aparece despues.", 5, 10),
         ],
+        domain_profile="history_es",
     )
 
     rows = related_topics(db_path, "Felipe", limit=10)
@@ -29,6 +30,7 @@ def test_topics_include_entity_metadata_and_connections(tmp_path):
             TranscriptSegment("El conquistador Francisco Pizarro viaja a Peru en 1533.", 1, 5),
             TranscriptSegment("El asesinato de Francisco Pizarro marca la guerra civil.", 5, 10),
         ],
+        domain_profile="history_es",
     )
 
     topics = {row["name"]: row for row in list_topics(db_path, limit=20)}

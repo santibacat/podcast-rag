@@ -27,6 +27,27 @@ By default, data is stored under `./data`.
 
 Media ingestion requires `ffmpeg` to be available on your system path. Transcription uses `faster-whisper` locally.
 
+## Multiple Corpora
+
+You can keep separate podcast collections and inspect them with the same dashboard. A registered corpus stores its own SQLite DB, media, transcripts, and local Qdrant index.
+
+```bash
+uv run podcast-rag create-corpus memorias --name "Memorias de un Tambor" --domain-profile history_es
+uv run podcast-rag create-corpus arte --name "Arte e Historia" --domain-profile history_es
+
+uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode all --max-items 5 --corpus memorias
+uv run podcast-rag index-retrieval --corpus memorias
+
+uv run podcast-rag topics --corpus memorias
+uv run podcast-rag ask "Donde se habla de Pizarro?" --corpus memorias
+```
+
+Run the dashboard with the registry root and use the corpus selector for `default`, any registered corpus, or `all` for a combined view:
+
+```bash
+uv run podcast-rag-dashboard --data-dir data --port 8765
+```
+
 Useful ingestion options:
 
 - `--playlist-mode single`: process only the given URL.
@@ -35,6 +56,52 @@ Useful ingestion options:
 - `--playlist-order newest`: prefer newest items when source metadata includes dates.
 - `--whisper-model small`: choose the local Whisper model size.
 - `--language es`: force Spanish transcription, or omit it for auto-detection.
+- `--domain-profile generic_es`: choose entity extraction heuristics.
+
+Available domain profiles:
+
+```bash
+uv run podcast-rag domain-profiles
+uv run podcast-rag profile-info history_es
+```
+
+Current profiles:
+
+- `generic_es`: default Spanish profile with general-purpose hints.
+- `history_es`: Spanish history profile with historical event/person/place/concept hints.
+- `generic_en`: general-purpose English profile.
+- `custom`: minimal low-assumption profile.
+
+Rebuild entities and relations without reingesting:
+
+```bash
+uv run podcast-rag rebuild-entities --domain-profile history_es
+uv run podcast-rag index-retrieval --force
+```
+
+## Chunking And Retrieval
+
+Transcript chunks are built from timestamped transcript segments. The current strategy accumulates neighboring transcript segments up to about 180 words, with about 35 words of overlap between chunks. Each chunk preserves the first available start timestamp, final end timestamp, and source segment range.
+
+Inspect the active chunking strategy:
+
+```bash
+uv run podcast-rag chunking-info
+```
+
+Recommended retrieval uses Qdrant hybrid search:
+
+- dense multilingual embeddings for semantic similarity
+- sparse BM25 vectors for keyword/fuzzy-ish lexical matching
+- RRF fusion to combine both result sets
+
+The older SQLite-only embedding path remains available through `index-embeddings` and `semantic-search`, mostly for debugging and comparison.
+
+Inspect corpus/index state and recommended next actions:
+
+```bash
+uv run podcast-rag system-status
+```
 
 ## Testing
 
@@ -99,13 +166,49 @@ uv run podcast-rag topics
 uv run podcast-rag connections --topic "Francisco Pizarro"
 ```
 
+Dashboard-ready analytics:
+
+```bash
+uv run podcast-rag corpus-stats
+uv run podcast-rag entity-profile "Francisco Pizarro"
+uv run podcast-rag timeline --topic "Francisco Pizarro"
+uv run podcast-rag episode-insights 1
+uv run podcast-rag topic-matrix --json
+uv run podcast-rag graph-export graph.json
+uv run podcast-rag quality-report
+```
+
 Run the MCP server for external agents:
 
 ```bash
 uv run podcast-rag-mcp
 ```
 
-The MCP server exposes `episodes`, `topics`, `connections`, `related`, `context`, `lexical_search`, `retrieve`, and `research`.
+The MCP server exposes ingestion and corpus-management tools: `list_corpora`, `create_corpus`, `discover_url`, `ingest_url`, `rebuild_corpus_entities`, `index_retrieval`, and `research_across_corpora`.
+
+It also exposes query tools: `episodes`, `topics`, `connections`, `related`, `context`, `lexical_search`, `retrieve`, `research`, and analytics tools such as `analytics_corpus_stats`, `analytics_entity_profile`, `analytics_timeline`, `analytics_episode_insights`, `analytics_topic_matrix`, `analytics_graph`, `analytics_quality_report`, `analytics_system_status`, `chunking_info`, and `domain_profile_info`. Most tools accept `corpus` plus `data_dir`, so an agent can create a corpus, ingest a URL into it, index it, and then research it without manually managing paths.
+
+Run the local dashboard:
+
+```bash
+cd dashboard
+npm install
+npm run build
+cd ..
+uv run podcast-rag-dashboard --data-dir data --port 8765
+```
+
+Then open `http://127.0.0.1:8765`.
+
+For frontend development with hot reload, run the Python API server on port `8765` and Vite in another terminal:
+
+```bash
+uv run podcast-rag-dashboard --data-dir data --port 8765
+cd dashboard
+npm run dev
+```
+
+Then open `http://127.0.0.1:5173`. Vite proxies `/api/*` to the Python dashboard server.
 
 The older SQLite-only semantic index is still available for comparison and simple debugging:
 

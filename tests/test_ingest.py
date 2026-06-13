@@ -50,6 +50,7 @@ def test_ingest_url_orchestrates_download_transcription_and_indexing(tmp_path, m
         device="cpu",
         compute_type="int8",
         language="es",
+        domain_profile="generic_es",
     )
 
     assert results[0].status == "imported"
@@ -90,6 +91,7 @@ def test_ingest_url_skips_existing_sources(tmp_path, monkeypatch):
         "cpu",
         "int8",
         "es",
+        "generic_es",
     )
     second = ingest_url(
         "https://example.com/episode",
@@ -101,6 +103,7 @@ def test_ingest_url_skips_existing_sources(tmp_path, monkeypatch):
         "cpu",
         "int8",
         "es",
+        "generic_es",
     )
 
     assert first[0].status == "imported"

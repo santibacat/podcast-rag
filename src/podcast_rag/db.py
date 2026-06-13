@@ -104,6 +104,7 @@ def add_episode(
     source_url: str | None = None,
     author: str | None = None,
     language: str | None = None,
+    domain_profile: str | None = None,
 ) -> int:
     init_db(db_path)
     with connect(db_path) as connection:
@@ -159,7 +160,7 @@ def add_episode(
             )
 
         for chunk_id, text in chunk_rows:
-            for candidate in extract_candidate_entities(text):
+            for candidate in extract_candidate_entities(text, domain_profile=domain_profile):
                 entity_id = upsert_entity(
                     connection,
                     candidate.name,
@@ -177,6 +178,49 @@ def add_episode(
         rebuild_entity_relations_for_episode(connection, episode_id)
 
     return episode_id
+
+
+def rebuild_entities(db_path: Path, domain_profile: str | None = None) -> dict[str, int]:
+    init_db(db_path)
+    with connect(db_path) as connection:
+        connection.execute("DELETE FROM entity_relations")
+        connection.execute("DELETE FROM entity_mentions")
+        connection.execute("DELETE FROM entities")
+        rows = connection.execute(
+            """
+            SELECT id, episode_id, text
+            FROM transcript_chunks
+            ORDER BY episode_id, id
+            """
+        ).fetchall()
+        mentions = 0
+        for row in rows:
+            for candidate in extract_candidate_entities(str(row["text"]), domain_profile=domain_profile):
+                entity_id = upsert_entity(
+                    connection,
+                    candidate.name,
+                    entity_type=candidate.entity_type,
+                    confidence=candidate.confidence,
+                    evidence=candidate.evidence,
+                )
+                connection.execute(
+                    """
+                    INSERT INTO entity_mentions (entity_id, episode_id, chunk_id, count)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (entity_id, int(row["episode_id"]), int(row["id"]), candidate.count),
+                )
+                mentions += 1
+        episode_ids = [
+            int(row["episode_id"])
+            for row in connection.execute("SELECT DISTINCT episode_id FROM transcript_chunks").fetchall()
+        ]
+        for episode_id in episode_ids:
+            rebuild_entity_relations_for_episode(connection, episode_id)
+        entity_count = int(connection.execute("SELECT COUNT(*) AS count FROM entities").fetchone()["count"])
+        relation_count = int(connection.execute("SELECT COUNT(*) AS count FROM entity_relations").fetchone()["count"])
+
+    return {"entities": entity_count, "mentions": mentions, "relations": relation_count}
 
 
 def episode_exists(db_path: Path, source_url: str) -> bool:

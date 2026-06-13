@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from podcast_rag.models import TranscriptChunk, TranscriptSegment
 
+DEFAULT_MAX_WORDS = 180
+DEFAULT_OVERLAP_WORDS = 35
+
 
 def chunk_segments(
     segments: list[TranscriptSegment],
-    max_words: int = 180,
-    overlap_words: int = 35,
+    max_words: int = DEFAULT_MAX_WORDS,
+    overlap_words: int = DEFAULT_OVERLAP_WORDS,
 ) -> list[TranscriptChunk]:
     if max_words <= 0:
         raise ValueError("max_words must be positive")
@@ -69,3 +72,14 @@ def _overlap_tail(
 
     selected.reverse()
     return selected, total
+
+
+def describe_chunking_strategy() -> dict[str, object]:
+    return {
+        "strategy": "timestamp-preserving segment accumulation",
+        "max_words": DEFAULT_MAX_WORDS,
+        "overlap_words": DEFAULT_OVERLAP_WORDS,
+        "timestamp_policy": "timestamp start is the first available segment start; timestamp end is the last available segment end",
+        "segment_policy": "chunks keep the source segment_start and segment_end positions",
+        "why": "simple, deterministic, cheap to rebuild, and transparent before adding semantic boundary detection",
+    }

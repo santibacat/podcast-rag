@@ -23,6 +23,7 @@ def test_list_transcript_chunks_returns_payload_source_rows(tmp_path):
         source_url="https://example.com/episode",
         author="Autor",
         language="es",
+        domain_profile="history_es",
     )
 
     rows = list_transcript_chunks(db_path)
@@ -83,6 +84,7 @@ def test_get_chunk_context_expands_neighboring_segments(tmp_path):
             TranscriptSegment("Felipe II.", 2, 3),
             TranscriptSegment("Despues.", 3, 4),
         ],
+        domain_profile="history_es",
     )
 
     context = get_chunk_context(db_path, chunk_id=1, before_segments=1, after_segments=1)

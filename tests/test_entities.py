@@ -2,17 +2,18 @@ from podcast_rag.entities import extract_candidate_entities, infer_entity_type, 
 
 
 def test_contextual_entity_type_inference_for_person_place_event_and_date():
-    assert infer_entity_type("Francisco Pizarro", "el conquistador fue asesinado en Lima")[0] == "PERSON"
-    assert infer_entity_type("El Escorial", "el monasterio fue simbolo religioso")[0] == "PLACE"
-    assert infer_entity_type("Lima", "asesinato guerra civil centros de poder")[0] == "PLACE"
-    assert infer_entity_type("La Corona", "guerra civil centros de poder politico")[0] == "CONCEPT"
-    assert infer_entity_type("Guerra de Sucesion", "la guerra cambio la corona")[0] == "EVENT"
-    assert infer_entity_type("1533", "en 1533 ocurrio la conquista")[0] == "DATE"
+    assert infer_entity_type("Francisco Pizarro", "el conquistador fue asesinado en Lima", "history_es")[0] == "PERSON"
+    assert infer_entity_type("El Escorial", "el monasterio fue simbolo religioso", "history_es")[0] == "PLACE"
+    assert infer_entity_type("Lima", "asesinato guerra civil centros de poder", "history_es")[0] == "PLACE"
+    assert infer_entity_type("La Corona", "guerra civil centros de poder politico", "history_es")[0] == "CONCEPT"
+    assert infer_entity_type("Guerra de Sucesion", "la guerra cambio la corona", "history_es")[0] == "EVENT"
+    assert infer_entity_type("1533", "en 1533 ocurrio la conquista", "history_es")[0] == "DATE"
 
 
 def test_extract_candidate_entities_returns_contextual_metadata():
     candidates = extract_candidate_entities(
-        "El conquistador Francisco Pizarro fue asesinado durante la guerra civil en Peru en 1541."
+        "El conquistador Francisco Pizarro fue asesinado durante la guerra civil en Peru en 1541.",
+        domain_profile="history_es",
     )
     by_name = {candidate.name: candidate for candidate in candidates}
 
@@ -23,4 +24,8 @@ def test_extract_candidate_entities_returns_contextual_metadata():
 
 
 def test_split_coordinated_entity():
-    assert split_coordinated_entity("Lima y la Corona") == ["Lima", "La Corona"]
+    assert split_coordinated_entity("Lima y la Corona", "history_es") == ["Lima", "La Corona"]
+
+
+def test_generic_profile_uses_context_without_history_known_places():
+    assert infer_entity_type("Lima", "ciudad importante", "generic_es")[0] == "PLACE"

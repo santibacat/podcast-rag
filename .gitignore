@@ -4,3 +4,6 @@ __pycache__/
 *.py[cod]
 data/
 .DS_Store
+dashboard/dist/
+dashboard/node_modules/
+dashboard/tsconfig.tsbuildinfo

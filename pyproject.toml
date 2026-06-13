@@ -19,6 +19,7 @@ dependencies = [
 [project.scripts]
 podcast-rag = "podcast_rag.cli:app"
 podcast-rag-mcp = "podcast_rag.mcp_server:main"
+podcast-rag-dashboard = "podcast_rag.dashboard:main"
 
 [dependency-groups]
 dev = [

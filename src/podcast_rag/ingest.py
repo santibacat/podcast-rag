@@ -29,6 +29,7 @@ def ingest_url(
     device: str,
     compute_type: str,
     language: str | None,
+    domain_profile: str | None = None,
     skip_existing: bool = True,
 ) -> list[IngestResult]:
     sources = discover_sources(
@@ -73,6 +74,7 @@ def ingest_url(
                 source_url=downloaded.source_url,
                 author=downloaded.author,
                 language=language or detected_language,
+                domain_profile=domain_profile,
             )
             results.append(
                 IngestResult(
