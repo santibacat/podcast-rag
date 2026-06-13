@@ -6,6 +6,7 @@ import type {
   EpisodeInsights,
   GraphData,
   QualityReport,
+  ProcessUrlResult,
   Stats,
   Status,
   TimelineEntry,
@@ -47,5 +48,14 @@ export const api = {
   episodeInsightsForCorpus: (episodeId: number, corpus?: string) =>
     getJson<EpisodeInsights>(withParams("/api/episode-insights", { episode_id: episodeId, corpus })),
   ask: (question: string, limit = 5, corpus?: string, mode = "local") =>
-    getJson<AskResult>(withParams("/api/ask", { q: question, limit, corpus, mode }))
+    getJson<AskResult>(withParams("/api/ask", { q: question, limit, corpus, mode })),
+  processUrl: (params: {
+    url: string;
+    corpus?: string;
+    language?: string;
+    whisper_model?: string;
+    transcribe_seconds?: string;
+    domain_profile?: string;
+    force_index?: string;
+  }) => getJson<ProcessUrlResult>(withParams("/api/process-url", params))
 };

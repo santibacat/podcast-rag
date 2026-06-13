@@ -70,3 +70,25 @@ def test_dashboard_api_ask_passes_mode(tmp_path, monkeypatch):
 
     assert result["brief"] == "ok"
     assert captured["mode"] == "llm"
+
+
+def test_dashboard_api_process_url_uses_workflow(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_process_url_workflow(**kwargs):
+        captured.update(kwargs)
+        return {"ready": True, "ingest": [], "index": {"indexed_chunks": 0}}
+
+    monkeypatch.setattr("podcast_rag.dashboard.process_url_workflow", fake_process_url_workflow)
+
+    result = route_api(
+        "/api/process-url",
+        {"url": ["https://example.com/show"], "language": ["es"], "whisper_model": ["tiny"]},
+        tmp_path,
+        None,
+    )
+
+    assert result["ready"] is True
+    assert captured["url"] == "https://example.com/show"
+    assert captured["language"] == "es"
+    assert captured["whisper_model"] == "tiny"

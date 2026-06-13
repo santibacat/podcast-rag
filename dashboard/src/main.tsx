@@ -13,7 +13,8 @@ import {
   Search,
   Settings,
   ShieldCheck,
-  Sparkles
+  Sparkles,
+  UploadCloud
 } from "lucide-react";
 import { api } from "./api";
 import type {
@@ -24,6 +25,7 @@ import type {
   GraphData,
   GraphNode,
   QualityReport,
+  ProcessUrlResult,
   Stats,
   Status,
   TimelineEntry,
@@ -31,12 +33,13 @@ import type {
 } from "./types";
 import "./styles.css";
 
-type View = "overview" | "episodes" | "entities" | "graph" | "timeline" | "ask" | "quality" | "settings";
+type View = "overview" | "ingest" | "episodes" | "entities" | "graph" | "timeline" | "ask" | "quality" | "settings";
 type Locale = "en" | "es";
 type Translator = (key: string, values?: Record<string, string | number>) => string;
 
 const views: Array<{ id: View; labelKey: string; icon: React.ReactNode }> = [
   { id: "overview", labelKey: "nav.overview", icon: <Activity size={17} /> },
+  { id: "ingest", labelKey: "nav.ingest", icon: <UploadCloud size={17} /> },
   { id: "episodes", labelKey: "nav.episodes", icon: <BookOpen size={17} /> },
   { id: "entities", labelKey: "nav.entities", icon: <ListFilter size={17} /> },
   { id: "graph", labelKey: "nav.graph", icon: <Network size={17} /> },
@@ -53,6 +56,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "status.empty": "No corpus loaded",
     "status.summary": "{episodes} episodes | {entities} entities | {connections} connections",
     "nav.overview": "Overview",
+    "nav.ingest": "Ingest",
     "nav.episodes": "Episodes",
     "nav.entities": "Entities",
     "nav.graph": "Graph",
@@ -75,6 +79,17 @@ const messages: Record<Locale, Record<string, string>> = {
     "overview.indexed": "{count} indexed",
     "overview.mentions": "mentions",
     "overview.chunking": "{strategy} | max {max} words | overlap {overlap} words",
+    "ingest.title": "Ingest and Index",
+    "ingest.url": "Podcast page, media URL, YouTube video or playlist",
+    "ingest.language": "Language",
+    "ingest.model": "Whisper model",
+    "ingest.seconds": "Limit seconds",
+    "ingest.profile": "Domain profile",
+    "ingest.process": "Process URL",
+    "ingest.running": "processing...",
+    "ingest.initial": "Choose a single corpus, paste a URL, and process it into a ready-to-query index.",
+    "ingest.allWarning": "Choose a single corpus before ingesting.",
+    "ingest.ready": "Ready: {count} item(s), {chunks} indexed chunks.",
     "chunking.timestamp-preserving segment accumulation": "timestamp-preserving segment accumulation",
     "metric.episodes": "episodes",
     "metric.segments": "segments",
@@ -162,6 +177,7 @@ const messages: Record<Locale, Record<string, string>> = {
     "status.empty": "No hay corpus cargado",
     "status.summary": "{episodes} episodios | {entities} entidades | {connections} conexiones",
     "nav.overview": "Resumen",
+    "nav.ingest": "Ingesta",
     "nav.episodes": "Episodios",
     "nav.entities": "Entidades",
     "nav.graph": "Grafo",
@@ -184,6 +200,17 @@ const messages: Record<Locale, Record<string, string>> = {
     "overview.indexed": "{count} indexadas",
     "overview.mentions": "menciones",
     "overview.chunking": "{strategy} | máximo {max} palabras | solape {overlap} palabras",
+    "ingest.title": "Ingestar e Indexar",
+    "ingest.url": "Página de podcast, URL de audio/video, YouTube o playlist",
+    "ingest.language": "Idioma",
+    "ingest.model": "Modelo Whisper",
+    "ingest.seconds": "Limitar segundos",
+    "ingest.profile": "Perfil de dominio",
+    "ingest.process": "Procesar URL",
+    "ingest.running": "procesando...",
+    "ingest.initial": "Elige un corpus concreto, pega una URL y procésala hasta dejarla lista para consultas.",
+    "ingest.allWarning": "Elige un corpus concreto antes de ingestar.",
+    "ingest.ready": "Listo: {count} item(s), {chunks} chunks indexados.",
     "chunking.timestamp-preserving segment accumulation": "acumulación de segmentos preservando marcas de tiempo",
     "metric.episodes": "episodios",
     "metric.segments": "segmentos",
@@ -440,6 +467,7 @@ function App() {
         </header>
 
         {active === "overview" && stats && status && <Overview stats={stats} status={status} topics={topics} t={t} />}
+        {active === "ingest" && <Ingest corpus={activeCorpus} t={t} onDone={loadAll} />}
         {active === "episodes" && <Episodes episodes={episodes} corpus={activeCorpus} t={t} />}
         {active === "entities" && <Entities topics={topics} corpus={activeCorpus} t={t} />}
         {active === "graph" && <GraphExplorer graph={graph} t={t} />}
@@ -449,6 +477,85 @@ function App() {
         {active === "settings" && <SettingsView locale={locale} setLocale={setAndStoreLocale} activeCorpus={activeCorpus} corpora={corpora} t={t} />}
       </main>
     </div>
+  );
+}
+
+function Ingest({ corpus, t, onDone }: { corpus: string; t: Translator; onDone: () => Promise<void> }) {
+  const [url, setUrl] = useState("");
+  const [language, setLanguage] = useState("es");
+  const [model, setModel] = useState("tiny");
+  const [seconds, setSeconds] = useState("");
+  const [profile, setProfile] = useState("generic_es");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<string>(t("ingest.initial"));
+
+  useEffect(() => {
+    if (!url && (result === messages.en["ingest.initial"] || result === messages.es["ingest.initial"])) {
+      setResult(t("ingest.initial"));
+    }
+  }, [t]);
+
+  async function run() {
+    if (!url.trim()) return;
+    if (corpus === "all") {
+      setResult(t("ingest.allWarning"));
+      return;
+    }
+    setRunning(true);
+    setResult(t("ingest.running"));
+    try {
+      const data: ProcessUrlResult = await api.processUrl({
+        url: url.trim(),
+        corpus,
+        language,
+        whisper_model: model,
+        transcribe_seconds: seconds,
+        domain_profile: profile
+      });
+      await onDone();
+      const count = data.ingest.length;
+      const chunks = data.index?.indexed_chunks ?? 0;
+      const lines = [
+        t("ingest.ready", { count, chunks }),
+        ...data.ingest.map((item) => `${item.status}: ${item.title || data.source_url} ${item.message || ""}`.trim())
+      ];
+      setResult(lines.join("\n"));
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <section className="view">
+      <Panel title={t("ingest.title")} aside={running ? t("ingest.running") : corpus}>
+        <div className="ingest-form">
+          <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={t("ingest.url")} />
+          <select value={language} onChange={(event) => setLanguage(event.target.value)} title={t("ingest.language")}>
+            <option value="es">es</option>
+            <option value="en">en</option>
+            <option value="">auto</option>
+          </select>
+          <select value={model} onChange={(event) => setModel(event.target.value)} title={t("ingest.model")}>
+            <option value="tiny">tiny</option>
+            <option value="base">base</option>
+            <option value="small">small</option>
+          </select>
+          <input value={seconds} onChange={(event) => setSeconds(event.target.value)} placeholder={t("ingest.seconds")} />
+          <select value={profile} onChange={(event) => setProfile(event.target.value)} title={t("ingest.profile")}>
+            <option value="generic_es">generic_es</option>
+            <option value="history_es">history_es</option>
+            <option value="generic_en">generic_en</option>
+            <option value="custom">custom</option>
+          </select>
+          <button className="btn" onClick={run} disabled={running || !url.trim()}>
+            {t("ingest.process")}
+          </button>
+        </div>
+        <pre className="answer">{result}</pre>
+      </Panel>
+    </section>
   );
 }
 

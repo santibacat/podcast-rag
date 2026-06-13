@@ -40,6 +40,7 @@ from podcast_rag.agent_tools import (
     tool_retrieve,
     tool_topics,
 )
+from podcast_rag.workflows import process_url_workflow
 
 mcp = FastMCP("podcast-rag")
 
@@ -181,6 +182,56 @@ def index_retrieval(
 
 
 @mcp.tool()
+def process_url(
+    url: str,
+    corpus: str | None = None,
+    create_corpus_if_missing: bool = False,
+    corpus_name: str | None = None,
+    playlist_mode: str = "all",
+    playlist_order: str = "source",
+    max_items: int | None = None,
+    whisper_model: str = "small",
+    device: str = "cpu",
+    compute_type: str = "int8",
+    language: str | None = None,
+    transcribe_seconds: int | None = None,
+    domain_profile: str = "generic_es",
+    qdrant_url: str | None = None,
+    collection: str = DEFAULT_QDRANT_COLLECTION,
+    batch_size: int = 64,
+    force_index: bool = False,
+    rebuild_entities_after_ingest: bool = True,
+    index_after_ingest: bool = True,
+    skip_existing: bool = True,
+    data_dir: str = "data",
+) -> dict[str, Any]:
+    """One-shot workflow: discover/download/transcribe/import, rebuild entities, and index retrieval."""
+    return process_url_workflow(
+        url=url,
+        data_dir=Path(data_dir),
+        corpus=corpus,
+        create_missing_corpus=create_corpus_if_missing,
+        corpus_name=corpus_name,
+        playlist_mode=PlaylistMode(playlist_mode),
+        playlist_order=PlaylistOrder(playlist_order),
+        max_items=max_items,
+        whisper_model=whisper_model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        transcribe_seconds=transcribe_seconds,
+        domain_profile=domain_profile,
+        qdrant_url=qdrant_url,
+        collection=collection,
+        batch_size=batch_size,
+        force_index=force_index,
+        rebuild=rebuild_entities_after_ingest,
+        index=index_after_ingest,
+        skip_existing=skip_existing,
+    )
+
+
+@mcp.tool()
 def episodes(data_dir: str = "data", corpus: str | None = None) -> list[dict[str, Any]]:
     """List ingested podcast/video episodes."""
     return tool_list_episodes(_corpus_config(data_dir, corpus))
@@ -262,6 +313,19 @@ def research(
 ) -> dict[str, Any]:
     """Run agentic retrieval and optionally add LLM synthesis when mode='llm'."""
     return agentic_research(question=question, limit=limit, mode=mode, config=_corpus_config(data_dir, corpus, qdrant_url=qdrant_url))
+
+
+@mcp.tool()
+def query(
+    question: str,
+    limit: int = 5,
+    mode: str = "local",
+    data_dir: str = "data",
+    corpus: str | None = None,
+    qdrant_url: str | None = None,
+) -> dict[str, Any]:
+    """Alias for research: ask a question over an indexed corpus."""
+    return research(question=question, limit=limit, mode=mode, data_dir=data_dir, corpus=corpus, qdrant_url=qdrant_url)
 
 
 @mcp.tool()

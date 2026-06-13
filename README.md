@@ -6,6 +6,26 @@ Current status: CLI foundation for importing transcripts, preserving timestamps,
 
 ## Quick Start
 
+One command can process a podcast page, media file, YouTube video, or playlist into a ready-to-query corpus:
+
+```bash
+uv run podcast-rag process-url "https://example.com/podcast-page" \
+  --corpus memorias \
+  --create-corpus \
+  --corpus-name "Memorias de un Tambor" \
+  --domain-profile history_es \
+  --language es \
+  --whisper-model tiny
+```
+
+Then query it:
+
+```bash
+uv run podcast-rag query "Que se dice de Magallanes y Elcano?" --corpus memorias
+```
+
+For a quick smoke test, add `--transcribe-seconds 180`. For production quality, use `--whisper-model small` or larger and let CPU transcription run longer.
+
 ```bash
 uv run podcast-rag init-db
 uv run podcast-rag ingest-transcript transcript.txt --title "Episode title" --source-url "https://example.com"
@@ -16,6 +36,7 @@ uv run podcast-rag ingest-url "https://youtube.com/playlist?list=..." --playlist
 uv run podcast-rag search "Felipe II"
 uv run podcast-rag index-retrieval
 uv run podcast-rag hybrid-search "Felipe Escorial simbolo religioso"
+uv run podcast-rag query "Felipe Escorial simbolo religioso"
 uv run podcast-rag connections --topic "Francisco Pizarro"
 uv run podcast-rag index-embeddings
 uv run podcast-rag semantic-search "monarquia y simbolos religiosos"
@@ -41,11 +62,10 @@ You can keep separate podcast collections and inspect them with the same dashboa
 uv run podcast-rag create-corpus memorias --name "Memorias de un Tambor" --domain-profile history_es
 uv run podcast-rag create-corpus arte --name "Arte e Historia" --domain-profile history_es
 
-uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode all --max-items 5 --corpus memorias
-uv run podcast-rag index-retrieval --corpus memorias
+uv run podcast-rag process-url "https://example.com/podcast-page" --playlist-mode all --max-items 5 --corpus memorias
 
 uv run podcast-rag topics --corpus memorias
-uv run podcast-rag ask "Donde se habla de Pizarro?" --corpus memorias
+uv run podcast-rag query "Donde se habla de Pizarro?" --corpus memorias
 ```
 
 Run the dashboard with the registry root and use the corpus selector for `default`, any registered corpus, or `all` for a combined view:
@@ -202,9 +222,9 @@ Run the MCP server for external agents:
 uv run podcast-rag-mcp
 ```
 
-The MCP server exposes ingestion and corpus-management tools: `list_corpora`, `create_corpus`, `discover_url`, `ingest_url`, `rebuild_corpus_entities`, `index_retrieval`, and `research_across_corpora`.
+The MCP server exposes ingestion and corpus-management tools: `list_corpora`, `create_corpus`, `discover_url`, `process_url`, `ingest_url`, `rebuild_corpus_entities`, `index_retrieval`, and `research_across_corpora`. Prefer `process_url` for one-shot ingestion/indexing.
 
-It also exposes query tools: `episodes`, `topics`, `connections`, `related`, `context`, `lexical_search`, `retrieve`, `research`, and analytics tools such as `analytics_corpus_stats`, `analytics_entity_profile`, `analytics_timeline`, `analytics_episode_insights`, `analytics_topic_matrix`, `analytics_graph`, `analytics_quality_report`, `analytics_system_status`, `chunking_info`, and `domain_profile_info`. Most tools accept `corpus` plus `data_dir`, so an agent can create a corpus, ingest a URL into it, index it, and then research it without manually managing paths.
+It also exposes query tools: `episodes`, `topics`, `connections`, `related`, `context`, `lexical_search`, `retrieve`, `query`, `research`, and analytics tools such as `analytics_corpus_stats`, `analytics_entity_profile`, `analytics_timeline`, `analytics_episode_insights`, `analytics_topic_matrix`, `analytics_graph`, `analytics_quality_report`, `analytics_system_status`, `chunking_info`, and `domain_profile_info`. Most tools accept `corpus` plus `data_dir`, so an agent can create a corpus, ingest a URL into it, index it, and then research it without manually managing paths.
 
 Run the local dashboard:
 

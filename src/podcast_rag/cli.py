@@ -48,6 +48,7 @@ from podcast_rag.search import (
 from podcast_rag.timecode import format_timestamp
 from podcast_rag.transcription import transcribe_audio
 from podcast_rag.transcripts import parse_transcript_file
+from podcast_rag.workflows import process_url_workflow
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -338,6 +339,80 @@ def discover_url_command(
     for index, source in enumerate(sources, start=1):
         table.add_row(str(index), source.source_type, str(source.title or ""), source.webpage_url or source.url)
     console.print(table)
+
+
+@app.command("process-url")
+def process_url_command(
+    url: str = typer.Argument(..., help="Media URL, YouTube URL, playlist, or page containing podcast/video links."),
+    corpus: str | None = corpus_option(),
+    create_corpus_if_missing: bool = typer.Option(False, "--create-corpus", help="Create --corpus automatically if it does not exist."),
+    corpus_name: str | None = typer.Option(None, "--corpus-name", help="Display name when --create-corpus is used."),
+    playlist_mode: PlaylistMode = typer.Option(PlaylistMode.all, "--playlist-mode", help="Expand pages/playlists by default."),
+    playlist_order: PlaylistOrder = typer.Option(PlaylistOrder.source, "--playlist-order"),
+    max_items: int | None = typer.Option(None, "--max-items", min=1),
+    whisper_model: str = typer.Option("small", "--whisper-model", help="faster-whisper model size."),
+    device: str = typer.Option("cpu", "--device", help="Whisper device: cpu, auto, cuda, or mps."),
+    compute_type: str = typer.Option("int8", "--compute-type", help="Whisper compute type."),
+    language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    transcribe_seconds: int | None = typer.Option(None, "--transcribe-seconds", min=1, help="Only transcribe first N seconds."),
+    domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
+    collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
+    batch_size: int = typer.Option(64, "--batch-size", min=1, max=512),
+    force_index: bool = typer.Option(False, "--force-index", help="Recreate the Qdrant collection after processing."),
+    no_rebuild_entities: bool = typer.Option(False, "--no-rebuild-entities", help="Skip entity/relation rebuild."),
+    no_index: bool = typer.Option(False, "--no-index", help="Skip Qdrant indexing."),
+    no_skip_existing: bool = typer.Option(False, "--no-skip-existing", help="Reprocess URLs already in the DB."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Process a URL end-to-end: ingest, rebuild entities, and index retrieval."""
+    result = process_url_workflow(
+        url=url,
+        data_dir=data_dir,
+        corpus=corpus,
+        create_missing_corpus=create_corpus_if_missing,
+        corpus_name=corpus_name,
+        playlist_mode=playlist_mode,
+        playlist_order=playlist_order,
+        max_items=max_items,
+        whisper_model=whisper_model,
+        device=device,
+        compute_type=compute_type,
+        language=language,
+        domain_profile=domain_profile,
+        skip_existing=not no_skip_existing,
+        transcribe_seconds=transcribe_seconds,
+        qdrant_url=qdrant_url,
+        collection=collection,
+        batch_size=batch_size,
+        force_index=force_index,
+        rebuild=not no_rebuild_entities,
+        index=not no_index,
+    )
+    if as_json:
+        console.print_json(json.dumps(result, ensure_ascii=False))
+        return
+
+    console.print(f"Processed [bold]{result['source_url']}[/bold]")
+    console.print(f"Corpus: [bold]{result['corpus']}[/bold] | Data dir: [bold]{result['data_dir']}[/bold]")
+    if result.get("created_corpus"):
+        console.print(f"Created corpus [bold]{result['created_corpus']['id']}[/bold].")
+    table = Table("Status", "Episode", "Title", "Message")
+    for item in result["ingest"]:
+        table.add_row(str(item["status"]), str(item.get("episode_id") or ""), str(item.get("title") or ""), str(item.get("message") or ""))
+    console.print(table)
+    if result.get("entities"):
+        entities = result["entities"]
+        console.print(
+            f"Entities rebuilt: [bold]{entities['entities']}[/bold] entities, "
+            f"[bold]{entities['mentions']}[/bold] mentions, [bold]{entities['relations']}[/bold] relations."
+        )
+    if result.get("index", {}).get("enabled"):
+        console.print(
+            f"Indexed [bold]{result['index']['indexed_chunks']}[/bold] chunks into "
+            f"[bold]{result['index']['collection']}[/bold]."
+        )
 
 
 @app.command("transcribe-audio")
@@ -642,6 +717,34 @@ def ask_command(
         for call in result["tool_calls"]:
             table.add_row(str(call["tool"]), str(call.get("topic") or ""), str(call.get("result_count", "")))
         console.print(table)
+
+
+@app.command("query")
+def query_command(
+    question: str = typer.Argument(..., help="Question to investigate."),
+    limit: int = typer.Option(5, "--limit", "-n", min=1, max=25),
+    mode: AskMode = typer.Option(AskMode.local, "--mode", help="Use local retrieval only or add LLM synthesis."),
+    collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
+    dense_model: str = typer.Option(DEFAULT_QDRANT_DENSE_MODEL, "--dense-model", help="FastEmbed dense model."),
+    sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
+    qdrant_url: str | None = typer.Option(None, "--qdrant-url", help="Qdrant server URL. Defaults to QDRANT_URL or local storage."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    corpus: str | None = corpus_option(),
+    data_dir: Path = data_dir_option(),
+) -> None:
+    """Alias for ask: query an indexed corpus with local or LLM-assisted retrieval."""
+    ask_command(
+        question=question,
+        limit=limit,
+        mode=mode,
+        collection=collection,
+        dense_model=dense_model,
+        sparse_model=sparse_model,
+        qdrant_url=qdrant_url,
+        as_json=as_json,
+        corpus=corpus,
+        data_dir=data_dir,
+    )
 
 
 @app.command("show")

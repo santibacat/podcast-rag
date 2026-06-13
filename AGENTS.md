@@ -47,13 +47,19 @@ Download and transcribe a URL:
 uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode single --language es
 ```
 
+Prefer the one-shot workflow when the user wants something ready to query:
+
+```bash
+uv run podcast-rag process-url "https://example.com/podcast-page" --corpus memorias --create-corpus --domain-profile history_es --language es
+uv run podcast-rag query "Donde se habla de Pizarro?" --corpus memorias
+```
+
 Create and use named corpora:
 
 ```bash
 uv run podcast-rag create-corpus memorias --name "Memorias de un Tambor" --domain-profile history_es
-uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode all --max-items 5 --corpus memorias
-uv run podcast-rag index-retrieval --corpus memorias
-uv run podcast-rag ask "Donde se habla de Pizarro?" --corpus memorias
+uv run podcast-rag process-url "https://example.com/podcast-page" --playlist-mode all --max-items 5 --corpus memorias
+uv run podcast-rag query "Donde se habla de Pizarro?" --corpus memorias
 ```
 
 Prefer `--corpus` over manually passing nested data directories when working with registered podcast collections. The dashboard supports the same registry and can display one corpus or `all` corpora together.

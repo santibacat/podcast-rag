@@ -23,6 +23,7 @@ from podcast_rag.analytics import (
 from podcast_rag.config import build_settings
 from podcast_rag.corpora import corpus_to_dict, load_corpora, resolve_corpus_set
 from podcast_rag.search import entity_connections, list_episodes, list_topics
+from podcast_rag.workflows import process_url_workflow
 
 
 def create_handler(data_dir: Path, qdrant_url: str | None = None):
@@ -145,6 +146,22 @@ def route_api(path: str, query: dict[str, list[str]], data_dir: Path, qdrant_url
         return graph_export(db_path, min_weight=_float_query(query, "min_weight", 0.0), limit=_int_query(query, "limit", 500))
     if path == "/api/quality":
         return quality_report(db_path)
+    if path == "/api/process-url":
+        url = _required_query(query, "url")
+        return process_url_workflow(
+            url=url,
+            data_dir=data_dir,
+            corpus=corpus_selector,
+            create_missing_corpus=False,
+            playlist_mode=_playlist_mode_query(query, "playlist_mode", "all"),
+            max_items=_optional_int_query(query, "max_items"),
+            whisper_model=_str_query(query, "whisper_model") or "tiny",
+            language=_str_query(query, "language") or None,
+            transcribe_seconds=_optional_int_query(query, "transcribe_seconds"),
+            domain_profile=_str_query(query, "domain_profile") or "generic_es",
+            qdrant_url=qdrant_url,
+            force_index=_bool_query(query, "force_index", False),
+        )
     if path == "/api/ask":
         question = _required_query(query, "q")
         return agentic_research(
@@ -451,6 +468,19 @@ def _optional_int_query(query: dict[str, list[str]], key: str) -> int | None:
 def _float_query(query: dict[str, list[str]], key: str, default: float) -> float:
     value = _str_query(query, key)
     return float(value) if value is not None else default
+
+
+def _bool_query(query: dict[str, list[str]], key: str, default: bool) -> bool:
+    value = _str_query(query, key)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _playlist_mode_query(query: dict[str, list[str]], key: str, default: str):
+    from podcast_rag.discovery import PlaylistMode
+
+    return PlaylistMode(_str_query(query, key) or default)
 
 
 def run_dashboard(host: str, port: int, data_dir: Path, qdrant_url: str | None = None) -> None:

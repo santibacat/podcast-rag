@@ -90,6 +90,16 @@ export type AskResult = {
   llm_answer?: string;
 };
 
+export type ProcessUrlResult = {
+  corpus: string;
+  data_dir: string;
+  source_url: string;
+  ready: boolean;
+  ingest: Array<{ status: string; title?: string | null; episode_id?: number | null; message?: string | null }>;
+  entities?: { entities: number; mentions: number; relations: number } | null;
+  index?: { enabled: boolean; collection: string; indexed_chunks?: number | null };
+};
+
 export type QualityReport = Record<string, Array<Record<string, unknown>>>;
 
 export type CorpusConfig = {
