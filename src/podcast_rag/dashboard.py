@@ -465,7 +465,7 @@ def run_dashboard(host: str, port: int, data_dir: Path, qdrant_url: str | None =
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Podcast RAG local dashboard.")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--qdrant-url", default=None)

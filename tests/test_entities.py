@@ -1,4 +1,4 @@
-from podcast_rag.entities import extract_candidate_entities, infer_entity_type, split_coordinated_entity
+from podcast_rag.entities import clean_entity_span, extract_candidate_entities, infer_entity_type, split_coordinated_entity
 
 
 def test_contextual_entity_type_inference_for_person_place_event_and_date():
@@ -29,3 +29,25 @@ def test_split_coordinated_entity():
 
 def test_generic_profile_uses_context_without_history_known_places():
     assert infer_entity_type("Lima", "ciudad importante", "generic_es")[0] == "PLACE"
+
+
+def test_discourse_connectors_are_not_extracted_as_entities():
+    candidates = extract_candidate_entities(
+        "Bueno, entonces Magallanes sale hacia América y Asia. De hecho, de nada sirve esa muletilla.",
+        domain_profile="history_es",
+    )
+    names = {candidate.name for candidate in candidates}
+
+    assert "Magallanes" in names
+    assert "América" in names
+    assert "Asia" in names
+    assert "Bueno" not in names
+    assert "Entonces" not in names
+    assert "De" not in names
+
+
+def test_entity_span_trims_dangling_connectors():
+    assert clean_entity_span("Magallanes de") == "Magallanes"
+    assert clean_entity_span("De Magallanes") == "Magallanes"
+    assert clean_entity_span("El Escorial") == "El Escorial"
+    assert clean_entity_span("Juan de Cartagena") == "Juan de Cartagena"

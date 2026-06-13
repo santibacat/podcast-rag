@@ -216,17 +216,17 @@ cd ..
 uv run podcast-rag-dashboard --data-dir data --port 8765
 ```
 
-Then open `http://127.0.0.1:8765`.
+Then open `http://<server-ip-or-domain>:8765`. The dashboard binds to `0.0.0.0` by default so it can receive traffic on remote servers.
 
 For frontend development with hot reload, run the Python API server on port `8765` and Vite in another terminal:
 
 ```bash
-uv run podcast-rag-dashboard --data-dir data --port 8765
+uv run podcast-rag-dashboard --data-dir data --host 0.0.0.0 --port 8765
 cd dashboard
 npm run dev
 ```
 
-Then open `http://127.0.0.1:5173`. Vite proxies `/api/*` to the Python dashboard server.
+Then open `http://<server-ip-or-domain>:5173`. Vite binds to `0.0.0.0` and proxies `/api/*` to the Python dashboard server.
 
 The older SQLite-only semantic index is still available for comparison and simple debugging, but it requires the optional `sentence-transformers` extra. On some Linux setups that extra may install Torch wheels with CUDA libraries, so keep it opt-in:
 

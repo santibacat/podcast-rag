@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from podcast_rag.domain_profiles import DomainProfile, get_domain_profile
@@ -10,6 +11,112 @@ ENTITY_RE = re.compile(
 )
 
 DATE_RE = re.compile(r"\b(?:\d{3,4}|siglo\s+[XVI]+|siglo\s+\d{1,2})\b", re.IGNORECASE)
+
+CONNECTOR_WORDS = {
+    "a",
+    "ahora",
+    "al",
+    "algo",
+    "algunos",
+    "alli",
+    "ante",
+    "aqui",
+    "asi",
+    "aunque",
+    "bien",
+    "bueno",
+    "claro",
+    "como",
+    "con",
+    "contra",
+    "cuando",
+    "de",
+    "del",
+    "desde",
+    "despues",
+    "durante",
+    "el",
+    "ella",
+    "ellos",
+    "en",
+    "entonces",
+    "entre",
+    "era",
+    "es",
+    "eso",
+    "este",
+    "esto",
+    "estos",
+    "evidentemente",
+    "fijaros",
+    "fue",
+    "hay",
+    "hola",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "mas",
+    "mientras",
+    "mucho",
+    "nada",
+    "no",
+    "para",
+    "parece",
+    "pero",
+    "por",
+    "porque",
+    "pues",
+    "que",
+    "realmente",
+    "se",
+    "si",
+    "sin",
+    "sobre",
+    "su",
+    "tambien",
+    "tras",
+    "un",
+    "una",
+    "vamos",
+    "ya",
+    "and",
+    "are",
+    "as",
+    "but",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "with",
+}
+
+LEADING_DANGLING_WORDS = {
+    "a",
+    "al",
+    "con",
+    "contra",
+    "de",
+    "del",
+    "desde",
+    "en",
+    "entre",
+    "para",
+    "por",
+    "sin",
+    "sobre",
+    "tras",
+}
 
 
 @dataclass(frozen=True)
@@ -30,13 +137,14 @@ def extract_candidate_entities(
     counter: Counter[str] = Counter()
     contexts: dict[str, str] = {}
     for match in ENTITY_RE.finditer(text):
-        value = " ".join(match.group(0).split())
-        if value in profile.stopwords:
-            continue
-        if len(value) < 3:
+        value = clean_entity_span(match.group(0))
+        if not is_informative_entity(value, profile):
             continue
         context = _context_window(text, match.start(), match.end())
         for entity_value in split_coordinated_entity(value, profile):
+            entity_value = clean_entity_span(entity_value)
+            if not is_informative_entity(entity_value, profile):
+                continue
             counter[entity_value] += 1
             contexts.setdefault(entity_value, context)
 
@@ -126,6 +234,41 @@ def split_coordinated_entity(value: str, domain_profile: str | DomainProfile | N
                     normalized.append(part)
                 return normalized
     return [value]
+
+
+def is_informative_entity(value: str, domain_profile: str | DomainProfile | None = None) -> bool:
+    profile = resolve_profile(domain_profile)
+    normalized = normalize_entity_key(value)
+    if len(normalized) < 3:
+        return False
+    profile_stopwords = {normalize_entity_key(stopword) for stopword in profile.stopwords}
+    if normalized in profile_stopwords or normalized in CONNECTOR_WORDS:
+        return False
+    words = normalized.split()
+    if all(word in CONNECTOR_WORDS for word in words):
+        return False
+    content_words = [word for word in words if word not in CONNECTOR_WORDS]
+    if not content_words:
+        return False
+    if len(content_words) == 1 and content_words[0] in CONNECTOR_WORDS:
+        return False
+    return True
+
+
+def clean_entity_span(value: str) -> str:
+    words = " ".join(value.split()).split()
+    while words and normalize_entity_key(words[0]) in LEADING_DANGLING_WORDS:
+        words.pop(0)
+    while words and normalize_entity_key(words[-1]) in CONNECTOR_WORDS:
+        words.pop()
+    return " ".join(words)
+
+
+def normalize_entity_key(value: str) -> str:
+    without_accents = "".join(
+        char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^a-z0-9]+", " ", without_accents.lower()).strip()
 
 
 def resolve_profile(domain_profile: str | DomainProfile | None = None) -> DomainProfile:
