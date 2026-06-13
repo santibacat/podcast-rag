@@ -124,6 +124,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "ask.title": "Ask the Corpus",
     "ask.thinking": "thinking...",
     "ask.mode": "agentic retrieval",
+    "ask.localMode": "Local",
+    "ask.llmMode": "LLM",
+    "ask.localHelp": "Local retrieval tools only.",
+    "ask.llmHelp": "Retrieval plus optional LLM synthesis.",
     "ask.placeholder": "What connects Pizarro with Peru?",
     "ask.initial": "Ask uses local agentic retrieval: topic inference, Qdrant retrieval, connections and evidence context.",
     "quality.issues": "{count} issues",
@@ -229,6 +233,10 @@ const messages: Record<Locale, Record<string, string>> = {
     "ask.title": "Preguntar al Corpus",
     "ask.thinking": "pensando...",
     "ask.mode": "recuperación agéntica",
+    "ask.localMode": "Local",
+    "ask.llmMode": "LLM",
+    "ask.localHelp": "Solo herramientas locales de recuperación.",
+    "ask.llmHelp": "Recuperación más síntesis LLM opcional.",
     "ask.placeholder": "¿Qué conecta a Pizarro con Perú?",
     "ask.initial": "Preguntar usa recuperación agéntica local: inferencia de temas, recuperación Qdrant, conexiones y contexto de evidencia.",
     "quality.issues": "{count} incidencias",
@@ -944,6 +952,7 @@ function Timeline({ topics, corpus, t }: { topics: Topic[]; corpus: string; t: T
 function Ask({ corpus, t }: { corpus: string; t: Translator }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(t("ask.initial"));
+  const [mode, setMode] = useState<"local" | "llm">("local");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -956,7 +965,7 @@ function Ask({ corpus, t }: { corpus: string; t: Translator }) {
     if (!question.trim()) return;
     setLoading(true);
     try {
-      const result = await api.ask(question.trim(), 5, corpus);
+      const result = await api.ask(question.trim(), 5, corpus, mode);
       setAnswer(result.brief);
     } catch (err) {
       setAnswer(err instanceof Error ? err.message : String(err));
@@ -971,6 +980,14 @@ function Ask({ corpus, t }: { corpus: string; t: Translator }) {
         <div className="ask-box">
           <Search size={18} />
           <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={t("ask.placeholder")} />
+          <div className="mode-switch" aria-label={t("ask.mode")}>
+            <button className={mode === "local" ? "active" : ""} onClick={() => setMode("local")} title={t("ask.localHelp")}>
+              {t("ask.localMode")}
+            </button>
+            <button className={mode === "llm" ? "active" : ""} onClick={() => setMode("llm")} title={t("ask.llmHelp")}>
+              {t("ask.llmMode")}
+            </button>
+          </div>
           <button className="btn" onClick={run}>
             {t("nav.ask")}
           </button>

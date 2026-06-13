@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from podcast_rag.config import build_settings
+from podcast_rag.llm import synthesize_with_llm
 from podcast_rag.retrieval_qdrant import (
     DEFAULT_QDRANT_COLLECTION,
     DEFAULT_QDRANT_DENSE_MODEL,
@@ -13,6 +15,11 @@ from podcast_rag.retrieval_qdrant import (
     retrieve_evidence,
 )
 from podcast_rag.search import entity_connections, get_chunk_context, list_episodes, list_topics, related_topics, search_chunks
+
+
+class AskMode(str, Enum):
+    local = "local"
+    llm = "llm"
 
 
 @dataclass(frozen=True)
@@ -110,7 +117,9 @@ def agentic_research(
     question: str,
     limit: int = 5,
     config: AgentToolConfig | None = None,
+    mode: AskMode | str = AskMode.local,
 ) -> dict[str, Any]:
+    ask_mode = AskMode(mode)
     resolved = config or AgentToolConfig()
     candidate_topics = infer_query_topics(question, resolved)
     primary_topic = candidate_topics[0]["name"] if candidate_topics else None
@@ -132,15 +141,23 @@ def agentic_research(
         lexical = tool_lexical_search(question, limit=limit, config=resolved)
         tool_calls.append({"tool": "lexical_search", "result_count": len(lexical)})
 
-    return {
+    local_brief = build_research_brief(question, evidence, connections, lexical)
+    result = {
         "question": question,
+        "mode": ask_mode.value,
         "inferred_topics": candidate_topics,
         "tool_calls": tool_calls,
         "evidence": evidence,
         "connections": connections,
         "lexical_fallback": lexical,
-        "brief": build_research_brief(question, evidence, connections, lexical),
+        "brief": local_brief,
+        "local_brief": local_brief,
     }
+    if ask_mode == AskMode.llm:
+        answer = synthesize_with_llm(question, local_brief)
+        result["llm_answer"] = answer
+        result["brief"] = f"LLM synthesis\n{answer}\n\nLocal evidence brief\n{local_brief}"
+    return result
 
 
 def infer_query_topics(question: str, config: AgentToolConfig, limit: int = 5) -> list[dict[str, Any]]:

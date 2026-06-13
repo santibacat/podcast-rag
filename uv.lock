@@ -1395,9 +1395,13 @@ dependencies = [
     { name = "mcp" },
     { name = "qdrant-client", extra = ["fastembed"] },
     { name = "rich" },
-    { name = "sentence-transformers" },
     { name = "typer" },
     { name = "yt-dlp" },
+]
+
+[package.optional-dependencies]
+sentence-transformers = [
+    { name = "sentence-transformers" },
 ]
 
 [package.dev-dependencies]
@@ -1413,10 +1417,11 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.12.0" },
     { name = "qdrant-client", extras = ["fastembed"], specifier = ">=1.14.2" },
     { name = "rich", specifier = ">=13.7.0" },
-    { name = "sentence-transformers", specifier = ">=3.0.0" },
+    { name = "sentence-transformers", marker = "extra == 'sentence-transformers'", specifier = ">=3.0.0" },
     { name = "typer", specifier = ">=0.12.0" },
     { name = "yt-dlp", specifier = ">=2025.1.15" },
 ]
+provides-extras = ["sentence-transformers"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

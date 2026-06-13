@@ -27,13 +27,14 @@ def test_ingest_url_orchestrates_download_transcription_and_indexing(tmp_path, m
             audio_path=str(tmp_path / "episode.mp3"),
         )
 
-    def fake_transcribe_audio(audio_path, model_size, device, compute_type, language, transcript_dir):
+    def fake_transcribe_audio(audio_path, model_size, device, compute_type, language, transcript_dir, transcribe_seconds):
         assert audio_path == Path(tmp_path / "episode.mp3")
         assert model_size == "tiny"
         assert device == "cpu"
         assert compute_type == "int8"
         assert language == "es"
         assert transcript_dir == settings.transcript_dir
+        assert transcribe_seconds == 30
         return [TranscriptSegment("Felipe II y El Escorial.", 1, 5)], "es"
 
     monkeypatch.setattr("podcast_rag.ingest.discover_sources", fake_discover_sources)
@@ -51,6 +52,7 @@ def test_ingest_url_orchestrates_download_transcription_and_indexing(tmp_path, m
         compute_type="int8",
         language="es",
         domain_profile="generic_es",
+        transcribe_seconds=30,
     )
 
     assert results[0].status == "imported"
@@ -74,7 +76,8 @@ def test_ingest_url_skips_existing_sources(tmp_path, monkeypatch):
             audio_path=str(tmp_path / "episode.mp3"),
         )
 
-    def fake_transcribe_audio(audio_path, model_size, device, compute_type, language, transcript_dir):
+    def fake_transcribe_audio(audio_path, model_size, device, compute_type, language, transcript_dir, transcribe_seconds):
+        assert transcribe_seconds is None
         return [TranscriptSegment("Felipe II.", 1, 2)], "es"
 
     monkeypatch.setattr("podcast_rag.ingest.discover_sources", fake_discover_sources)

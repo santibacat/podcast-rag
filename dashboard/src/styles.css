@@ -581,6 +581,29 @@ th {
   min-width: min(420px, 100%);
 }
 
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fffefa;
+}
+
+.mode-switch button {
+  border: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mode-switch button.active {
+  background: #dce7e0;
+  color: var(--ink);
+}
+
 .answer,
 .quality-list pre {
   white-space: pre-wrap;

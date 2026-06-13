@@ -122,9 +122,10 @@ def ingest_url(
     playlist_order: str = "source",
     max_items: int | None = None,
     whisper_model: str = "small",
-    device: str = "auto",
-    compute_type: str = "auto",
+    device: str = "cpu",
+    compute_type: str = "int8",
     language: str | None = None,
+    transcribe_seconds: int | None = None,
     domain_profile: str | None = None,
     skip_existing: bool = True,
     data_dir: str = "data",
@@ -146,6 +147,7 @@ def ingest_url(
         language=language,
         domain_profile=domain_profile,
         skip_existing=skip_existing,
+        transcribe_seconds=transcribe_seconds,
     )
     return [result.__dict__ for result in results]
 
@@ -253,12 +255,13 @@ def retrieve(
 def research(
     question: str,
     limit: int = 5,
+    mode: str = "local",
     data_dir: str = "data",
     corpus: str | None = None,
     qdrant_url: str | None = None,
 ) -> dict[str, Any]:
-    """Run the local agentic retrieval workflow and return evidence, connections, and a brief."""
-    return agentic_research(question=question, limit=limit, config=_corpus_config(data_dir, corpus, qdrant_url=qdrant_url))
+    """Run agentic retrieval and optionally add LLM synthesis when mode='llm'."""
+    return agentic_research(question=question, limit=limit, mode=mode, config=_corpus_config(data_dir, corpus, qdrant_url=qdrant_url))
 
 
 @mcp.tool()
@@ -266,6 +269,7 @@ def research_across_corpora(
     question: str,
     corpus_selector: str = "all",
     limit: int = 5,
+    mode: str = "local",
     data_dir: str = "data",
     qdrant_url: str | None = None,
 ) -> dict[str, Any]:
@@ -278,6 +282,7 @@ def research_across_corpora(
             result = agentic_research(
                 question=question,
                 limit=limit,
+                mode=mode,
                 config=AgentToolConfig(data_dir=settings.data_dir, qdrant_url=settings.qdrant_url),
             )
         except Exception as exc:

@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from podcast_rag.agent_tools import AgentToolConfig, agentic_research
+from podcast_rag.agent_tools import AgentToolConfig, AskMode, agentic_research
 from podcast_rag.analytics import (
     corpus_stats,
     entity_profile,
@@ -164,6 +164,30 @@ def chunking_info_command(as_json: bool = typer.Option(False, "--json", help="Pr
     console.print(table)
 
 
+@app.command("qdrant-health")
+def qdrant_health_command(
+    qdrant_url: str = typer.Option("http://localhost:6333", "--qdrant-url", help="Qdrant server URL."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Check a Qdrant server deployment."""
+    import httpx
+
+    url = qdrant_url.rstrip("/")
+    try:
+        response = httpx.get(f"{url}/", timeout=5)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        raise typer.BadParameter(f"Qdrant server is not reachable at {url}: {exc}") from exc
+
+    result = {"url": url, "status": "ok", "response": payload}
+    if as_json:
+        console.print_json(json.dumps(result, ensure_ascii=False))
+        return
+    console.print(f"Qdrant server [bold]OK[/bold] at [bold]{url}[/bold]")
+    console.print_json(json.dumps(payload, ensure_ascii=False))
+
+
 @app.command("ingest-transcript")
 def ingest_transcript_command(
     transcript_path: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
@@ -234,9 +258,15 @@ def ingest_url_command(
         help="Maximum playlist/page items to ingest. Source ordering is preserved.",
     ),
     whisper_model: str = typer.Option("small", "--whisper-model", help="faster-whisper model size."),
-    device: str = typer.Option("auto", "--device", help="Whisper device: auto, cpu, cuda, or mps."),
-    compute_type: str = typer.Option("auto", "--compute-type", help="Whisper compute type."),
+    device: str = typer.Option("cpu", "--device", help="Whisper device: cpu, auto, cuda, or mps."),
+    compute_type: str = typer.Option("int8", "--compute-type", help="Whisper compute type."),
     language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    transcribe_seconds: int | None = typer.Option(
+        None,
+        "--transcribe-seconds",
+        min=1,
+        help="Only transcribe the first N seconds. Useful for smoke tests.",
+    ),
     domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
     no_skip_existing: bool = typer.Option(False, "--no-skip-existing", help="Reprocess URLs already in the DB."),
     corpus: str | None = corpus_option(),
@@ -258,6 +288,7 @@ def ingest_url_command(
         language=language,
         domain_profile=domain_profile,
         skip_existing=not no_skip_existing,
+        transcribe_seconds=transcribe_seconds,
     )
     table = Table("Status", "Episode", "Title", "Source", "Message")
     for result in results:
@@ -316,9 +347,15 @@ def transcribe_audio_command(
     source_url: str | None = typer.Option(None, "--source-url", help="Original media URL."),
     author: str | None = typer.Option(None, "--author", help="Podcast author or channel."),
     whisper_model: str = typer.Option("small", "--whisper-model", help="faster-whisper model size."),
-    device: str = typer.Option("auto", "--device", help="Whisper device: auto, cpu, cuda, or mps."),
-    compute_type: str = typer.Option("auto", "--compute-type", help="Whisper compute type."),
+    device: str = typer.Option("cpu", "--device", help="Whisper device: cpu, auto, cuda, or mps."),
+    compute_type: str = typer.Option("int8", "--compute-type", help="Whisper compute type."),
     language: str | None = typer.Option(None, "--language", help="Optional language code, e.g. es."),
+    transcribe_seconds: int | None = typer.Option(
+        None,
+        "--transcribe-seconds",
+        min=1,
+        help="Only transcribe the first N seconds. Useful for smoke tests.",
+    ),
     domain_profile: str = typer.Option(DEFAULT_DOMAIN_PROFILE, "--domain-profile", help="Entity extraction domain profile."),
     corpus: str | None = corpus_option(),
     data_dir: Path = data_dir_option(),
@@ -334,6 +371,7 @@ def transcribe_audio_command(
         compute_type=compute_type,
         language=language,
         transcript_dir=settings.transcript_dir,
+        transcribe_seconds=transcribe_seconds,
     )
     episode_id = add_episode(
         settings.db_path,
@@ -569,6 +607,7 @@ def retrieve_command(
 def ask_command(
     question: str = typer.Argument(..., help="Question to investigate with local retrieval tools."),
     limit: int = typer.Option(5, "--limit", "-n", min=1, max=25),
+    mode: AskMode = typer.Option(AskMode.local, "--mode", help="Use local retrieval only or add LLM synthesis."),
     collection: str = typer.Option(DEFAULT_QDRANT_COLLECTION, "--collection", help="Qdrant collection name."),
     dense_model: str = typer.Option(DEFAULT_QDRANT_DENSE_MODEL, "--dense-model", help="FastEmbed dense model."),
     sparse_model: str = typer.Option(DEFAULT_QDRANT_SPARSE_MODEL, "--sparse-model", help="FastEmbed sparse/BM25 model."),
@@ -582,6 +621,7 @@ def ask_command(
     result = agentic_research(
         question=question,
         limit=limit,
+        mode=mode,
         config=AgentToolConfig(
             data_dir=settings.data_dir,
             qdrant_url=settings.qdrant_url,

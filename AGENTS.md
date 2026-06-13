@@ -20,7 +20,18 @@ This repo implements a local-first agentic retrieval system for podcasts and vid
 uv run pytest
 ```
 
-The first use of Whisper, sentence-transformers, or Qdrant FastEmbed models may download model files.
+The base environment is CPU-first. Whisper defaults to `device=cpu` and `compute_type=int8`; do not switch to `auto` or `cuda` unless a user explicitly asks for GPU use. The first use of Whisper or Qdrant FastEmbed models may download model files.
+
+`sentence-transformers` is an optional extra for the older SQLite-only embedding path. Do not add it to the base dependency set because it can install Torch/CUDA packages on Linux. Use `uv sync --extra sentence-transformers` only when specifically testing `index-embeddings` or `semantic-search`.
+
+Qdrant local embedded storage is useful for single-command workflows, but it locks the storage directory. Prefer the server mode for dashboards, MCP, or concurrent agents:
+
+```bash
+docker compose -f docker-compose.qdrant.yml up -d
+QDRANT_URL=http://localhost:6333 uv run podcast-rag index-retrieval
+```
+
+`ask` defaults to `mode=local` and must not call an LLM implicitly. Use `mode=llm` only when the user asks for generative synthesis and the environment has `PODCAST_RAG_LLM_MODEL` plus an OpenAI-compatible `PODCAST_RAG_LLM_BASE_URL` configured.
 
 ## Main CLI Flows
 

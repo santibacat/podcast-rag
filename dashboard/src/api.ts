@@ -46,5 +46,6 @@ export const api = {
   episodeInsights: (episodeId: number) => getJson<EpisodeInsights>(`/api/episode-insights?episode_id=${episodeId}`),
   episodeInsightsForCorpus: (episodeId: number, corpus?: string) =>
     getJson<EpisodeInsights>(withParams("/api/episode-insights", { episode_id: episodeId, corpus })),
-  ask: (question: string, limit = 5, corpus?: string) => getJson<AskResult>(withParams("/api/ask", { q: question, limit, corpus }))
+  ask: (question: string, limit = 5, corpus?: string, mode = "local") =>
+    getJson<AskResult>(withParams("/api/ask", { q: question, limit, corpus, mode }))
 };

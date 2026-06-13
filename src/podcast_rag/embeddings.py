@@ -23,7 +23,13 @@ class SentenceTransformerEmbedder:
     model_name: str = DEFAULT_EMBEDDING_MODEL
 
     def __post_init__(self) -> None:
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:
+            raise RuntimeError(
+                "The SQLite embedding path requires the optional 'sentence-transformers' extra. "
+                "Install it with: uv sync --extra sentence-transformers"
+            ) from exc
 
         self._model = SentenceTransformer(self.model_name)
 

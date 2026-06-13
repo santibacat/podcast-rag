@@ -150,6 +150,7 @@ def route_api(path: str, query: dict[str, list[str]], data_dir: Path, qdrant_url
         return agentic_research(
             question=question,
             limit=_int_query(query, "limit", 5),
+            mode=_str_query(query, "mode") or "local",
             config=AgentToolConfig(data_dir=settings.data_dir, qdrant_url=settings.qdrant_url),
         )
     raise LookupError(f"Unknown API route: {path}")
@@ -253,6 +254,7 @@ def route_multi_corpus_api(
                 result = agentic_research(
                     question=question,
                     limit=_int_query(query, "limit", 5),
+                    mode=_str_query(query, "mode") or "local",
                     config=AgentToolConfig(data_dir=settings.data_dir, qdrant_url=settings.qdrant_url),
                 )
             except Exception as exc:

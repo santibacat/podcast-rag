@@ -85,6 +85,9 @@ export type EpisodeInsights = {
 
 export type AskResult = {
   brief: string;
+  mode?: "local" | "llm";
+  local_brief?: string;
+  llm_answer?: string;
 };
 
 export type QualityReport = Record<string, Array<Record<string, unknown>>>;

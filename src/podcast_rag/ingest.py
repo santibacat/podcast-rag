@@ -31,6 +31,7 @@ def ingest_url(
     language: str | None,
     domain_profile: str | None = None,
     skip_existing: bool = True,
+    transcribe_seconds: int | None = None,
 ) -> list[IngestResult]:
     sources = discover_sources(
         url,
@@ -66,6 +67,7 @@ def ingest_url(
                 compute_type=compute_type,
                 language=language,
                 transcript_dir=settings.transcript_dir,
+                transcribe_seconds=transcribe_seconds,
             )
             episode_id = add_episode(
                 settings.db_path,

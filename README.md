@@ -25,7 +25,13 @@ uv run podcast-rag episodes
 
 By default, data is stored under `./data`.
 
-Media ingestion requires `ffmpeg` to be available on your system path. Transcription uses `faster-whisper` locally.
+Media ingestion requires `ffmpeg` to be available on your system path. Transcription uses `faster-whisper` locally on CPU by default (`--device cpu --compute-type int8`). GPU use is opt-in through CLI/MCP flags.
+
+The base install avoids optional Torch/CUDA dependencies. The recommended retrieval path is Qdrant + FastEmbed, which runs on CPU by default. The older SQLite-only `index-embeddings` path requires an optional extra:
+
+```bash
+uv sync --extra sentence-transformers
+```
 
 ## Multiple Corpora
 
@@ -55,6 +61,8 @@ Useful ingestion options:
 - `--max-items N`: limit expanded playlists/pages to N items.
 - `--playlist-order newest`: prefer newest items when source metadata includes dates.
 - `--whisper-model small`: choose the local Whisper model size.
+- `--device cpu`: default Whisper device; pass `--device cuda` only when you intentionally want GPU.
+- `--compute-type int8`: default CPU-friendly Whisper compute type.
 - `--language es`: force Spanish transcription, or omit it for auto-detection.
 - `--domain-profile generic_es`: choose entity extraction heuristics.
 
@@ -128,10 +136,16 @@ uv run podcast-rag discover-url "https://www.youtube.com/watch?v=_-Tuvu6CIQA&t=1
 uv run podcast-rag discover-url "https://memoriasdeuntambor.com/96-el-asesinato-de-pizarro" --playlist-mode single --json
 ```
 
-Full ingestion downloads audio and runs local Whisper, so it can take a while:
+Full ingestion downloads audio and runs local CPU Whisper, so it can take a while:
 
 ```bash
 uv run podcast-rag ingest-url "https://memoriasdeuntambor.com/96-el-asesinato-de-pizarro" --playlist-mode single --language es --whisper-model small
+```
+
+For intentional GPU transcription, pass the device explicitly:
+
+```bash
+uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode single --device cuda --compute-type float16
 ```
 
 Build semantic search after transcripts are imported:
@@ -148,9 +162,13 @@ Local Qdrant storage is single-process. Run Qdrant-backed CLI commands sequentia
 Use a Qdrant server instead of local embedded storage:
 
 ```bash
+docker compose -f docker-compose.qdrant.yml up -d
+uv run podcast-rag qdrant-health --qdrant-url "http://localhost:6333"
 QDRANT_URL="http://localhost:6333" uv run podcast-rag index-retrieval
 uv run podcast-rag hybrid-search "Pizarro Peru" --qdrant-url "http://localhost:6333"
 ```
+
+Qdrant server is optional, free, and open source. The local embedded mode is convenient for one command at a time, but the server mode is recommended when the dashboard, CLI, MCP tools, or multiple agents may query/index concurrently.
 
 Retrieve evidence with expanded transcript context:
 
@@ -210,9 +228,29 @@ npm run dev
 
 Then open `http://127.0.0.1:5173`. Vite proxies `/api/*` to the Python dashboard server.
 
-The older SQLite-only semantic index is still available for comparison and simple debugging:
+The older SQLite-only semantic index is still available for comparison and simple debugging, but it requires the optional `sentence-transformers` extra. On some Linux setups that extra may install Torch wheels with CUDA libraries, so keep it opt-in:
 
 ```bash
+uv sync --extra sentence-transformers
 uv run podcast-rag index-embeddings
 uv run podcast-rag semantic-search "donde se habla de poder religioso y monarquia"
 ```
+
+## Ask Modes
+
+`ask` defaults to local agentic retrieval. It does not call an LLM unless you opt into LLM mode.
+
+```bash
+uv run podcast-rag ask "Que se dice de Magallanes?" --mode local
+```
+
+LLM mode first runs the same local tools, then sends the retrieved evidence to an OpenAI-compatible chat endpoint for synthesis:
+
+```bash
+export PODCAST_RAG_LLM_MODEL="your-chat-model"
+export PODCAST_RAG_LLM_BASE_URL="https://api.openai.com/v1"
+export PODCAST_RAG_LLM_API_KEY="..."
+uv run podcast-rag ask "Que se dice de Magallanes?" --mode llm
+```
+
+For local LLM servers, point `PODCAST_RAG_LLM_BASE_URL` at their OpenAI-compatible `/v1` endpoint and set the model name they expose.
