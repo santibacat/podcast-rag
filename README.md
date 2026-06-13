@@ -46,7 +46,11 @@ uv run podcast-rag episodes
 
 By default, data is stored under `./data`.
 
-Media ingestion requires `ffmpeg` to be available on your system path. Transcription uses `faster-whisper` locally on CPU by default (`--device cpu --compute-type int8`). GPU use is opt-in through CLI/MCP flags.
+Media ingestion requires `ffmpeg` to be available on your system path. Transcription uses `faster-whisper` locally on CPU by default (`--device cpu --compute-type int8`). GPU use is opt-in through CLI/MCP flags. On Linux x86_64 hosts with an NVIDIA GPU, install the CUDA runtime libraries with the optional extra before using `--device cuda`:
+
+```bash
+uv sync --extra cuda
+```
 
 The base install avoids optional Torch/CUDA dependencies. The recommended retrieval path is Qdrant + FastEmbed, which runs on CPU by default. The older SQLite-only `index-embeddings` path requires an optional extra:
 
@@ -165,6 +169,7 @@ uv run podcast-rag ingest-url "https://memoriasdeuntambor.com/96-el-asesinato-de
 For intentional GPU transcription, pass the device explicitly:
 
 ```bash
+uv sync --extra cuda
 uv run podcast-rag ingest-url "https://example.com/podcast-page" --playlist-mode single --device cuda --compute-type float16
 ```
 

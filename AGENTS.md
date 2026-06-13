@@ -22,6 +22,8 @@ uv run pytest
 
 The base environment is CPU-first. Whisper defaults to `device=cpu` and `compute_type=int8`; do not switch to `auto` or `cuda` unless a user explicitly asks for GPU use. The first use of Whisper or Qdrant FastEmbed models may download model files.
 
+CUDA support for `faster-whisper` is opt-in. On Linux x86_64 NVIDIA hosts, use `uv sync --extra cuda` before running with `--device cuda --compute-type float16`. Do not add CUDA packages to the base dependency set; macOS and CPU-only Linux installs should not download NVIDIA wheels.
+
 `sentence-transformers` is an optional extra for the older SQLite-only embedding path. Do not add it to the base dependency set because it can install Torch/CUDA packages on Linux. Use `uv sync --extra sentence-transformers` only when specifically testing `index-embeddings` or `semantic-search`.
 
 Qdrant local embedded storage is useful for single-command workflows, but it locks the storage directory. Prefer the server mode for dashboards, MCP, or concurrent agents:
